@@ -1,6 +1,6 @@
 # Cursor Overlay
 
-語言：[English](README.md) | 繁體中文
+[English](README.md) | 繁體中文
 
 Cursor Overlay 是一個 Windows 系統匣小工具。它會讀取目前的系統游標位置與游標樣式，在相同螢幕位置繪製一個游標覆蓋層，並可在覆蓋層啟用時隱藏原始系統游標。
 
