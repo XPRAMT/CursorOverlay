@@ -88,12 +88,13 @@ def raise_last_winerror(action):
 
 
 class CursorState:
-    def __init__(self, x, y, cursor, hotspot_x, hotspot_y):
+    def __init__(self, x, y, cursor, hotspot_x, hotspot_y, is_visible):
         self.x = x
         self.y = y
         self.cursor = cursor
         self.hotspot_x = hotspot_x
         self.hotspot_y = hotspot_y
+        self.is_visible = is_visible
 
 
 class CursorReader:
@@ -102,7 +103,7 @@ class CursorReader:
         info.cbSize = ctypes.sizeof(CURSORINFO)
         if not user32.GetCursorInfo(ctypes.byref(info)):
             raise_last_winerror("GetCursorInfo failed")
-        if not info.flags & CURSOR_SHOWING or not info.hCursor:
+        if not info.hCursor:
             return None
 
         icon = user32.CopyIcon(info.hCursor)
@@ -125,6 +126,7 @@ class CursorReader:
             icon,
             int(icon_info.xHotspot),
             int(icon_info.yHotspot),
+            bool(info.flags & CURSOR_SHOWING),
         )
 
 
