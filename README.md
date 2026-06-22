@@ -7,6 +7,13 @@ position, and can hide the original system cursor while the overlay is active.
 It is written in Python with PySide6 and uses Win32 APIs for cursor state,
 cursor drawing, topmost positioning, and per-user startup registration.
 
+## Background
+
+This app was created to work around a cursor visibility issue observed on
+Windows 11 build 26300. Instead of replacing the Windows cursor stack, it reads
+the live cursor state, redraws the cursor as a topmost overlay, and optionally
+hides the original cursor.
+
 ## Features
 
 - Reads the live cursor position with `GetCursorInfo`.
