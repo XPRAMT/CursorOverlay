@@ -9,8 +9,8 @@ cursor drawing, topmost positioning, and per-user startup registration.
 
 ## Background
 
-This app was created to work around a cursor visibility issue observed on
-Windows 11 build 26300. Instead of replacing the Windows cursor stack, it reads
+This app was created to work around a cursor flickering issue on Windows 11
+build 26300. Instead of replacing the Windows cursor stack, it reads
 the live cursor state, redraws the cursor as a topmost overlay, and optionally
 hides the original cursor.
 
