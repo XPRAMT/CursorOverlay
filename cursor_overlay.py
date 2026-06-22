@@ -2,14 +2,11 @@ import ctypes
 import sys
 from ctypes import wintypes
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap, QPolygon
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
-    QFormLayout,
-    QLabel,
-    QMainWindow,
+    QMenu,
     QSystemTrayIcon,
     QWidget,
 )
@@ -258,40 +255,73 @@ class OverlayWindow(QWidget):
             user32.ReleaseDC(int(self.winId()), hdc)
 
 
-class ControlWindow(QMainWindow):
-    def __init__(self, overlay, tray):
-        super().__init__()
+def create_tray_icon():
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(Qt.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(QPen(QColor("#0f172a"), 4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    painter.setBrush(QColor("#f8fafc"))
+    pointer = QPolygon(
+        [
+            QPoint(14, 8),
+            QPoint(14, 48),
+            QPoint(27, 38),
+            QPoint(35, 56),
+            QPoint(44, 52),
+            QPoint(36, 35),
+            QPoint(52, 35),
+        ]
+    )
+    painter.drawPolygon(pointer)
+    painter.setPen(QPen(QColor("#38bdf8"), 5, Qt.SolidLine, Qt.RoundCap))
+    painter.drawEllipse(38, 38, 16, 16)
+    painter.end()
+    return QIcon(pixmap)
+
+
+class TrayController:
+    def __init__(self, app, overlay, tray):
+        self.app = app
         self.overlay = overlay
         self.tray = tray
-        self.is_quitting = False
-        self.setWindowTitle("Cursor Overlay")
-        self.setFixedWidth(320)
-        self.setCursor(Qt.BlankCursor)
 
-        self.status_label = QLabel("Overlay running")
-        self.hide_checkbox = QCheckBox("Hide original cursor")
-        self.hide_checkbox.setChecked(True)
-        self.hide_checkbox.toggled.connect(self.overlay.set_hide_original)
+        self.menu = QMenu()
+        self.status_action = QAction("Cursor overlay running")
+        self.status_action.setEnabled(False)
 
-        layout = QFormLayout()
-        layout.addRow("Status", self.status_label)
-        layout.addRow(self.hide_checkbox)
+        self.hide_action = QAction("Hide original cursor")
+        self.hide_action.setCheckable(True)
+        self.hide_action.setChecked(True)
+        self.hide_action.toggled.connect(self.overlay.set_hide_original)
 
-        central = QWidget()
-        central.setCursor(Qt.BlankCursor)
-        central.setLayout(layout)
-        self.setCentralWidget(central)
+        self.quit_action = QAction("Quit")
+        self.quit_action.triggered.connect(self.quit)
 
-    def closeEvent(self, event):
-        if self.is_quitting:
-            event.accept()
-            return
+        self.menu.aboutToShow.connect(self.overlay.visibility_guard.show)
+        self.menu.aboutToHide.connect(self.restore_overlay_visibility)
+        self.menu.addAction(self.status_action)
+        self.menu.addSeparator()
+        self.menu.addAction(self.hide_action)
+        self.menu.addSeparator()
+        self.menu.addAction(self.quit_action)
 
-        self.is_quitting = True
+        self.tray.setContextMenu(self.menu)
+        self.tray.activated.connect(self.handle_activation)
+
+    def handle_activation(self, reason):
+        if reason == QSystemTrayIcon.Trigger:
+            self.menu.popup(self.tray.geometry().center())
+
+    def restore_overlay_visibility(self):
+        if self.hide_action.isChecked():
+            self.overlay.set_hide_original(True)
+
+    def quit(self):
         self.overlay.stop()
         self.tray.hide()
-        QApplication.quit()
-        event.accept()
+        self.app.quit()
 
 
 def main():
@@ -301,25 +331,14 @@ def main():
     visibility_guard = CursorVisibilityGuard()
     overlay = OverlayWindow(CursorReader(), visibility_guard)
 
-    tray = QSystemTrayIcon(app.style().standardIcon(QApplication.style().StandardPixmap.SP_ComputerIcon))
-    control = ControlWindow(overlay, tray)
-    show_action = QAction("Show controls")
-    quit_action = QAction("Quit")
-    show_action.triggered.connect(control.show)
-    quit_action.triggered.connect(app.quit)
-    tray_menu = tray.contextMenu() or None
-    if tray_menu is None:
-        from PySide6.QtWidgets import QMenu
-
-        tray_menu = QMenu()
-    tray_menu.addAction(show_action)
-    tray_menu.addAction(quit_action)
-    tray.setContextMenu(tray_menu)
+    tray = QSystemTrayIcon(create_tray_icon())
+    tray.setToolTip("Cursor Overlay")
+    tray_controller = TrayController(app, overlay, tray)
     tray.show()
 
     app.aboutToQuit.connect(overlay.stop)
     overlay.start()
-    control.show()
+    app.tray_controller = tray_controller
     return app.exec()
 
 
