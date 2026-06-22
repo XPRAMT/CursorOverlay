@@ -20,6 +20,10 @@ gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
 
 CURSOR_SHOWING = 0x00000001
 DI_NORMAL = 0x0003
+HWND_TOPMOST = wintypes.HWND(-1)
+SWP_NOSIZE = 0x0001
+SWP_NOACTIVATE = 0x0010
+SWP_SHOWWINDOW = 0x0040
 OVERLAY_SIZE = 256
 OVERLAY_PADDING = OVERLAY_SIZE // 2
 
@@ -78,6 +82,16 @@ user32.ShowCursor.argtypes = [wintypes.BOOL]
 user32.ShowCursor.restype = ctypes.c_int
 user32.GetSystemMetrics.argtypes = [ctypes.c_int]
 user32.GetSystemMetrics.restype = ctypes.c_int
+user32.SetWindowPos.argtypes = [
+    wintypes.HWND,
+    wintypes.HWND,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.UINT,
+]
+user32.SetWindowPos.restype = wintypes.BOOL
 gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
 gdi32.DeleteObject.restype = wintypes.BOOL
 
@@ -199,7 +213,19 @@ class OverlayWindow(QWidget):
         self.cursor_state = state
         if state:
             self.move(state.x - OVERLAY_PADDING, state.y - OVERLAY_PADDING)
+            self.keep_above_application_windows()
         self.update()
+
+    def keep_above_application_windows(self):
+        user32.SetWindowPos(
+            int(self.winId()),
+            HWND_TOPMOST,
+            self.x(),
+            self.y(),
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )
 
     def destroy_current_icon(self):
         if self.cursor_state and self.cursor_state.cursor:
@@ -238,6 +264,7 @@ class ControlWindow(QMainWindow):
         self.overlay = overlay
         self.setWindowTitle("Cursor Overlay")
         self.setFixedWidth(320)
+        self.setCursor(Qt.BlankCursor)
 
         self.status_label = QLabel("Overlay running")
         self.hide_checkbox = QCheckBox("Hide original cursor")
@@ -249,6 +276,7 @@ class ControlWindow(QMainWindow):
         layout.addRow(self.hide_checkbox)
 
         central = QWidget()
+        central.setCursor(Qt.BlankCursor)
         central.setLayout(layout)
         self.setCentralWidget(central)
 
