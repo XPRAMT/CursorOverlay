@@ -259,9 +259,11 @@ class OverlayWindow(QWidget):
 
 
 class ControlWindow(QMainWindow):
-    def __init__(self, overlay):
+    def __init__(self, overlay, tray):
         super().__init__()
         self.overlay = overlay
+        self.tray = tray
+        self.is_quitting = False
         self.setWindowTitle("Cursor Overlay")
         self.setFixedWidth(320)
         self.setCursor(Qt.BlankCursor)
@@ -281,7 +283,14 @@ class ControlWindow(QMainWindow):
         self.setCentralWidget(central)
 
     def closeEvent(self, event):
+        if self.is_quitting:
+            event.accept()
+            return
+
+        self.is_quitting = True
         self.overlay.stop()
+        self.tray.hide()
+        QApplication.quit()
         event.accept()
 
 
@@ -291,9 +300,9 @@ def main():
 
     visibility_guard = CursorVisibilityGuard()
     overlay = OverlayWindow(CursorReader(), visibility_guard)
-    control = ControlWindow(overlay)
 
     tray = QSystemTrayIcon(app.style().standardIcon(QApplication.style().StandardPixmap.SP_ComputerIcon))
+    control = ControlWindow(overlay, tray)
     show_action = QAction("Show controls")
     quit_action = QAction("Quit")
     show_action.triggered.connect(control.show)
