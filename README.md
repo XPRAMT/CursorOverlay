@@ -1,5 +1,7 @@
 # Cursor Overlay
 
+Language: English | [繁體中文](README.zh-TW.md)
+
 Cursor Overlay is a small Windows tray utility that reads the current system
 cursor position and cursor style, draws a cursor overlay at the same screen
 position, and can hide the original system cursor while the overlay is active.
