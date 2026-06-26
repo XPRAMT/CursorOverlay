@@ -190,25 +190,37 @@ class PointerRenderingManager:
         path = Path(expanded)
         return path if path.exists() else None
 
-    def padded_cursor_path(self, role):
-        return self.cursor_output_dir() / f"cursor_overlay_{role.lower()}.cur"
+    def padded_cursor_path(self, role, source):
+        extension = ".ani" if source.suffix.lower() == ".ani" else ".cur"
+        return self.cursor_output_dir() / f"cursor_overlay_{role.lower()}{extension}"
 
     def ensure_padded_cursor_scheme(self):
         self.cursor_output_dir().mkdir(exist_ok=True)
+        padded_paths = {}
         source_values = self.original_or_current_cursor_values()
         for role in FALLBACK_CURSOR_ROLES:
             source = self.resolve_cursor_path(source_values.get(role)) or self.fallback_cursor_source_path(role)
-            target = self.padded_cursor_path(role)
+            target = self.padded_cursor_path(role, source)
             try:
                 self.write_padded_cursor(source, target)
             except ValueError:
                 fallback_source = self.fallback_cursor_source_path(role)
                 if fallback_source == source:
                     raise
+                target = self.padded_cursor_path(role, fallback_source)
                 self.write_padded_cursor(fallback_source, target)
+            padded_paths[role] = target
+        return padded_paths
 
     def write_padded_cursor(self, source, target):
-        image, hot_x, hot_y = self.read_smallest_cursor_frame(source)
+        data = source.read_bytes()
+        if data[:4] == b"RIFF":
+            target.write_bytes(self.build_padded_ani(data, source))
+            return
+        target.write_bytes(self.build_padded_cursor_from_data(data, source))
+
+    def build_padded_cursor_from_data(self, data, source):
+        image, hot_x, hot_y = self.read_smallest_cursor_frame(data, source)
         canvas = QImage(PADDED_CURSOR_CANVAS_SIZE, PADDED_CURSOR_CANVAS_SIZE, QImage.Format_ARGB32)
         canvas.fill(Qt.transparent)
 
@@ -217,13 +229,9 @@ class PointerRenderingManager:
         painter.end()
 
         png_data = self.image_to_png_bytes(canvas)
-        target.write_bytes(self.build_cursor_file(png_data, PADDED_CURSOR_CANVAS_SIZE, hot_x, hot_y))
+        return self.build_cursor_file(png_data, PADDED_CURSOR_CANVAS_SIZE, hot_x, hot_y)
 
-    def read_smallest_cursor_frame(self, source):
-        data = source.read_bytes()
-        if data[:4] == b"RIFF":
-            data = self.extract_first_ani_cursor(data, source)
-
+    def read_smallest_cursor_frame(self, data, source):
         reserved = int.from_bytes(data[0:2], "little")
         cursor_type = int.from_bytes(data[2:4], "little")
         image_count = int.from_bytes(data[4:6], "little")
@@ -259,6 +267,40 @@ class PointerRenderingManager:
             hot_x = round(hot_x * image.width() / width)
             hot_y = round(hot_y * image.height() / height)
         return image.convertToFormat(QImage.Format_ARGB32), hot_x, hot_y
+
+    def build_padded_ani(self, data, source):
+        if data[:4] != b"RIFF" or data[8:12] != b"ACON":
+            raise ValueError(f"Not an animated cursor file: {source}")
+        body = self.rebuild_ani_chunks(data, 12, len(data), source)
+        return b"RIFF" + (len(body) + 4).to_bytes(4, "little") + b"ACON" + body
+
+    def rebuild_ani_chunks(self, data, start, end, source):
+        output = bytearray()
+        offset = start
+        while offset + 8 <= end:
+            chunk_id = data[offset : offset + 4]
+            chunk_size = int.from_bytes(data[offset + 4 : offset + 8], "little")
+            chunk_start = offset + 8
+            chunk_end = min(chunk_start + chunk_size, end)
+            chunk_data = data[chunk_start:chunk_end]
+
+            if chunk_id == b"icon":
+                chunk_data = self.build_padded_cursor_from_data(chunk_data, source)
+                chunk_size = len(chunk_data)
+                output += chunk_id + chunk_size.to_bytes(4, "little") + chunk_data
+            elif chunk_id in (b"RIFF", b"LIST") and len(chunk_data) >= 4:
+                list_type = chunk_data[:4]
+                nested = self.rebuild_ani_chunks(chunk_data, 4, len(chunk_data), source)
+                rebuilt = list_type + nested
+                output += chunk_id + len(rebuilt).to_bytes(4, "little") + rebuilt
+                chunk_size = len(rebuilt)
+            else:
+                output += chunk_id + chunk_size.to_bytes(4, "little") + chunk_data
+
+            if chunk_size & 1:
+                output += b"\x00"
+            offset = chunk_end + (int.from_bytes(data[offset + 4 : offset + 8], "little") & 1)
+        return bytes(output)
 
     def extract_first_ani_cursor(self, data, source):
         offset = 12 if data[:4] == b"RIFF" else 0
@@ -355,10 +397,10 @@ class PointerRenderingManager:
 
     def apply_padded_cursor_scheme(self):
         self.backup_current_cursor_scheme(force=not self.is_current_padded_scheme())
-        self.ensure_padded_cursor_scheme()
+        padded_paths = self.ensure_padded_cursor_scheme()
         self.set_registry_string(CURSORS_REGISTRY_PATH, "", PADDED_SCHEME_NAME)
         for role in FALLBACK_CURSOR_ROLES:
-            self.set_registry_string(CURSORS_REGISTRY_PATH, role, str(self.padded_cursor_path(role)))
+            self.set_registry_string(CURSORS_REGISTRY_PATH, role, str(padded_paths[role]))
         self.reload_cursors()
         self.apply_stable_cursor_base_size()
 

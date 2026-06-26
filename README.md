@@ -96,12 +96,13 @@ wrong and can write the pointer address into the registry.
 The app first backs up the active cursor scheme, then reads the smallest frame
 from each original cursor file. It places that glyph at the top-left of a 144 px
 transparent canvas, preserves the original hotspot, and writes generated `.cur`
-files under `generated_cursors/`.
+or `.ani` files under `generated_cursors/`.
 
 If a cursor role was empty or points to a missing file, the app falls back to the
 matching default cursor under `C:\Windows\Cursors`.
-Animated `.ani` cursors are converted by extracting their first embedded cursor
-frame.
+Animated `.ani` cursors are rebuilt as padded `.ani` files: the original RIFF
+animation structure, frame rate, and frame sequence are preserved, while each
+embedded cursor frame is converted to the 144 px padded format.
 
 Those generated files are runtime output and are intentionally ignored by Git.
 
