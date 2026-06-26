@@ -291,6 +291,13 @@ class CursorState:
 
 
 class CursorReader:
+    def read_position(self):
+        info = CURSORINFO()
+        info.cbSize = ctypes.sizeof(CURSORINFO)
+        if not user32.GetCursorInfo(ctypes.byref(info)):
+            raise_last_winerror("GetCursorInfo failed")
+        return info.ptScreenPos.x, info.ptScreenPos.y, bool(info.flags & CURSOR_SHOWING)
+
     def read(self):
         info = CURSORINFO()
         info.cbSize = ctypes.sizeof(CURSORINFO)
@@ -375,8 +382,8 @@ class OverlayWindow(QWidget):
         self.reader = reader
         self.visibility_guard = visibility_guard
         self.cursor_state = None
-        self.hide_original = True
-        self.draw_overlay = True
+        self.hide_original = False
+        self.draw_overlay = False
 
         self.setWindowFlags(
             Qt.FramelessWindowHint
@@ -413,7 +420,7 @@ class OverlayWindow(QWidget):
             self.show()
         else:
             self.destroy_current_icon()
-            self.hide()
+            self.show()
         self.apply_cursor_visibility()
         self.update()
 
@@ -425,11 +432,20 @@ class OverlayWindow(QWidget):
 
     def refresh_cursor(self):
         if not self.draw_overlay:
+            x, y, _ = self.reader.read_position()
             self.destroy_current_icon()
+            self.move(x - OVERLAY_PADDING, y - OVERLAY_PADDING)
+            self.keep_above_application_windows()
             self.update()
             return
 
-        state = self.reader.read()
+        if self.visibility_guard.enabled and self.cursor_state:
+            x, y, _ = self.reader.read_position()
+            self.cursor_state.x = x
+            self.cursor_state.y = y
+            state = self.cursor_state
+        else:
+            state = self.reader.read()
         self.destroy_current_icon()
         self.cursor_state = state
         if state:
@@ -500,12 +516,12 @@ class TrayController:
 
         self.draw_action = QAction("Draw overlay cursor")
         self.draw_action.setCheckable(True)
-        self.draw_action.setChecked(True)
+        self.draw_action.setChecked(False)
         self.draw_action.toggled.connect(self.overlay.set_draw_overlay)
 
         self.hide_action = QAction("Hide original cursor")
         self.hide_action.setCheckable(True)
-        self.hide_action.setChecked(True)
+        self.hide_action.setChecked(False)
         self.hide_action.toggled.connect(self.overlay.set_hide_original)
 
         self.startup_action = QAction("Start with Windows")

@@ -2,22 +2,22 @@
 
 [English](README.md) | 繁體中文
 
-Cursor Overlay 是一個 Windows 系統匣小工具。它會讀取目前的系統游標位置與游標樣式，在相同螢幕位置繪製一個游標覆蓋層，並可在覆蓋層啟用時隱藏原始系統游標。
+Cursor Overlay 是一個為了減輕 Windows 11 游標閃爍問題而做的系統匣小工具。預設狀態下，它會讓一個透明、click-through、最上層 overlay 視窗跟著系統游標移動，藉此影響游標周圍的桌面合成路徑，而不是取代可見的 Windows 游標。
 
 這個工具使用 Python 與 PySide6 製作，並透過 Win32 API 讀取游標狀態、繪製游標、維持最上層視窗，以及註冊目前使用者的開機自啟。
 
 ## 背景
 
-這個 app 是為了解決 Windows 11 build 26300 的游標閃爍問題而誕生。它不取代 Windows 的游標系統，而是讀取即時游標狀態，將游標重畫成最上層覆蓋層，並可選擇隱藏原始游標。
+這個 app 是為了解決 Windows 11 build 26300 的游標閃爍問題而誕生。主要緩解方式不是取代游標，而是在即時游標位置周圍維持透明最上層 overlay。自繪游標與隱藏原始游標則保留為診斷/測試控制項。
 
 ## 功能
 
 - 使用 `GetCursorInfo` 讀取即時游標位置。
 - 使用 `CopyIcon` 與 `GetIconInfo` 讀取目前游標樣式與 hotspot。
-- 使用 `DrawIconEx` 在原始游標位置繪製游標覆蓋層。
+- 讓透明最上層 overlay 視窗跟隨游標位置。
 - 沒有主要視窗，完全透過 system tray 管理。
-- 可從 system tray 選單啟用或停用自繪游標覆蓋層。
-- 可從 system tray 選單隱藏或恢復原始系統游標；隱藏方式是暫時把 Windows system cursor 替換成透明游標。
+- 可從 system tray 選單啟用或停用實驗性的自繪游標覆蓋層。
+- 可從 system tray 選單隱藏或恢復原始系統游標供測試；隱藏方式是暫時把 Windows system cursor 替換成透明游標。
 - 開啟 system tray 選單時會暫時恢復系統游標。
 - 可選擇透過 Windows Run registry key 設定目前使用者的開機自啟。
 
@@ -43,7 +43,7 @@ python cursor_overlay.pyw
 
 ## System Tray 選單
 
-- `Draw overlay cursor`：啟用或停用自繪游標覆蓋層。
+- `Draw overlay cursor`：啟用或停用自繪游標覆蓋層。這個選項預設關閉，因為主要閃爍緩解方式不需要取代游標。
 - `Hide original cursor`：隱藏或恢復原始系統游標。這個開關與自繪游標互相獨立，因此停用自繪游標並維持隱藏原始游標時，可以進入完全沒有游標的測試狀態。
 - `Start with Windows`：切換登入 Windows 後自動啟動。
 - `Quit`：停止覆蓋層、恢復系統游標、隱藏 tray icon，並結束程式。

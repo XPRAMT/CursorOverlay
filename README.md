@@ -2,9 +2,11 @@
 
 English | [繁體中文](README.zh-TW.md)
 
-Cursor Overlay is a small Windows tray utility that reads the current system
-cursor position and cursor style, draws a cursor overlay at the same screen
-position, and can hide the original system cursor while the overlay is active.
+Cursor Overlay is a small Windows tray utility created to reduce cursor
+flickering on affected Windows 11 builds. By default it keeps a transparent,
+click-through, topmost overlay window following the system cursor. This can
+change the desktop composition path around the cursor without replacing the
+visible Windows cursor.
 
 It is written in Python with PySide6 and uses Win32 APIs for cursor state,
 cursor drawing, topmost positioning, and per-user startup registration.
@@ -12,18 +14,18 @@ cursor drawing, topmost positioning, and per-user startup registration.
 ## Background
 
 This app was created to work around a cursor flickering issue on Windows 11
-build 26300. Instead of replacing the Windows cursor stack, it reads
-the live cursor state, redraws the cursor as a topmost overlay, and optionally
-hides the original cursor.
+build 26300. The primary mitigation is not cursor replacement; it is keeping a
+transparent topmost overlay around the live cursor position. Optional cursor
+drawing and original-cursor hiding are kept as diagnostic controls.
 
 ## Features
 
 - Reads the live cursor position with `GetCursorInfo`.
 - Reads the active cursor style and hotspot with `CopyIcon` and `GetIconInfo`.
-- Draws the cursor overlay at the original cursor position with `DrawIconEx`.
+- Keeps a transparent topmost overlay window following the cursor position.
 - Runs without a main window; management is done from the system tray.
-- Can enable or disable the self-drawn overlay cursor from the tray menu.
-- Can hide or restore the original system cursor by temporarily replacing
+- Can enable or disable an experimental self-drawn overlay cursor.
+- Can hide or restore the original system cursor for testing by temporarily replacing
   Windows system cursors with transparent cursors.
 - Temporarily restores the system cursor while the tray menu is open.
 - Optional per-user startup launch through the Windows Run registry key.
@@ -52,6 +54,8 @@ menu.
 ## Tray Menu
 
 - `Draw overlay cursor`: enables or disables the self-drawn cursor overlay.
+  This is off by default because the main flicker workaround does not require
+  cursor replacement.
 - `Hide original cursor`: hides or restores the original system cursor. This is
   independent from the overlay cursor, so disabling both can leave no visible
   cursor for testing.
