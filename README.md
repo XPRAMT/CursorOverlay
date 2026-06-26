@@ -30,14 +30,8 @@ gate. The flicker stops only when `CursorBaseSize` is at least `144`.
 - Runs only in the system tray.
 - Generates and applies a padded small cursor scheme at launch.
 - Applies `CursorBaseSize=144` at launch without changing `CursorSize`.
-- Can regenerate padded cursors at `32`, `48`, `64`, or `96` px glyph sizes.
-- Can apply cursor-base-size presets without changing `CursorSize`:
-  - `144`: stable path.
-  - `128`: below-threshold comparison.
-  - `32`: normal small-base comparison.
-- Can restore the cursor scheme that was active before applying the padded
-  scheme.
-- Can regenerate the padded scheme from a saved Windows cursor scheme.
+- Restores the original cursor scheme and default `CursorBaseSize=32` when the
+  app exits.
 - Optional per-user startup launch through the Windows Run registry key.
 
 ## Requirements
@@ -64,20 +58,9 @@ stable `CursorBaseSize=144` path.
 
 ## Tray Menu
 
-- `Apply padded small cursor scheme`: generates 144 px cursor files with a
-  selected-size glyph and applies them as the active cursor scheme.
-- `Use saved cursor scheme`: selects a saved Windows cursor scheme as the image
-  source for regenerated padded cursors.
-- `Glyph size`: regenerates the padded cursor scheme at a different visible
-  glyph size. Larger values preserve more detail but look larger.
-- `Restore original cursor scheme`: restores the cursor scheme backed up before
-  the padded scheme was first applied.
-- `Apply stable base size (144)`: applies the stable `CursorBaseSize=144`
-  path without changing `CursorSize`.
-- `Test below threshold (128)`: applies `CursorBaseSize=128`.
-- `Test unstable base size (32)`: applies `CursorBaseSize=32`.
 - `Start with Windows`: toggles launch at user sign-in.
-- `Quit`: hides the tray icon and exits.
+- `Quit`: restores the original cursor scheme, restores `CursorBaseSize=32`,
+  hides the tray icon, and exits.
 
 When `Start with Windows` is enabled, the stable base size is applied again at
 user sign-in, and the padded cursor scheme is re-applied.

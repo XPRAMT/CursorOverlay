@@ -17,6 +17,7 @@ SPI_SETCURSORS = 0x0057
 SPIF_UPDATEINIFILE = 0x0001
 SPIF_SENDCHANGE = 0x0002
 STABLE_CURSOR_BASE_SIZE = 144
+DEFAULT_CURSOR_BASE_SIZE = 32
 PADDED_CURSOR_CANVAS_SIZE = 144
 DEFAULT_PADDED_CURSOR_GLYPH_SIZE = 48
 STARTUP_APP_NAME = "CursorOverlay"
@@ -185,6 +186,9 @@ class PointerRenderingManager:
 
     def apply_stable_cursor_base_size(self):
         self.apply_cursor_base_size(STABLE_CURSOR_BASE_SIZE)
+
+    def restore_default_cursor_base_size(self):
+        self.apply_cursor_base_size(DEFAULT_CURSOR_BASE_SIZE)
 
     def cursor_output_dir(self):
         return Path(__file__).resolve().parent / "generated_cursors"
@@ -451,6 +455,10 @@ class PointerRenderingManager:
                 pass
         self.reload_cursors()
 
+    def restore_on_exit(self):
+        self.restore_original_cursor_scheme()
+        self.restore_default_cursor_base_size()
+
     def reload_cursors(self):
         user32.SystemParametersInfoW(SPI_SETCURSORS, 0, None, SPIF_SENDCHANGE)
 
@@ -492,46 +500,6 @@ class TrayController:
         self.status_action = QAction(self.pointer_rendering_manager.status_text())
         self.status_action.setEnabled(False)
 
-        self.padded_scheme_action = QAction("Apply padded small cursor scheme")
-        self.padded_scheme_action.triggered.connect(self.apply_padded_cursor_scheme)
-
-        self.saved_schemes_menu = QMenu("Use saved cursor scheme")
-        self.saved_scheme_actions = []
-        for scheme_name in sorted(self.pointer_rendering_manager.saved_cursor_schemes()):
-            action = self.saved_schemes_menu.addAction(scheme_name)
-            action.triggered.connect(
-                lambda checked=False, name=scheme_name: self.apply_padded_cursor_scheme_from_saved_scheme(name)
-            )
-            self.saved_scheme_actions.append(action)
-        if self.saved_schemes_menu.isEmpty():
-            empty_action = self.saved_schemes_menu.addAction("No saved schemes")
-            empty_action.setEnabled(False)
-            self.saved_scheme_actions.append(empty_action)
-
-        self.glyph_size_menu = QMenu("Glyph size")
-        self.glyph_size_actions = []
-        current_glyph_size = self.pointer_rendering_manager.padded_glyph_size()
-        for glyph_size in (32, 48, 64, 96):
-            action = self.glyph_size_menu.addAction(f"{glyph_size}px")
-            action.setCheckable(True)
-            action.setChecked(glyph_size == current_glyph_size)
-            action.triggered.connect(
-                lambda checked=False, size=glyph_size: self.apply_padded_cursor_scheme_with_glyph_size(size)
-            )
-            self.glyph_size_actions.append(action)
-
-        self.restore_scheme_action = QAction("Restore original cursor scheme")
-        self.restore_scheme_action.triggered.connect(self.restore_original_cursor_scheme)
-
-        self.stable_base_action = QAction("Apply stable base size (144)")
-        self.stable_base_action.triggered.connect(self.apply_stable_cursor_base_size)
-
-        self.near_threshold_action = QAction("Test below threshold (128)")
-        self.near_threshold_action.triggered.connect(lambda: self.apply_cursor_base_size(128))
-
-        self.unstable_base_action = QAction("Test unstable base size (32)")
-        self.unstable_base_action.triggered.connect(lambda: self.apply_cursor_base_size(32))
-
         self.startup_action = QAction("Start with Windows")
         self.startup_action.setCheckable(True)
         self.startup_action.setChecked(self.startup_manager.is_enabled())
@@ -541,15 +509,6 @@ class TrayController:
         self.quit_action.triggered.connect(self.quit)
 
         self.menu.addAction(self.status_action)
-        self.menu.addSeparator()
-        self.menu.addAction(self.padded_scheme_action)
-        self.menu.addMenu(self.saved_schemes_menu)
-        self.menu.addMenu(self.glyph_size_menu)
-        self.menu.addAction(self.restore_scheme_action)
-        self.menu.addSeparator()
-        self.menu.addAction(self.stable_base_action)
-        self.menu.addAction(self.near_threshold_action)
-        self.menu.addAction(self.unstable_base_action)
         self.menu.addSeparator()
         self.menu.addAction(self.startup_action)
         self.menu.addSeparator()
@@ -568,36 +527,6 @@ class TrayController:
         self.startup_action.setChecked(self.startup_manager.is_enabled())
         del blocker
 
-    def apply_cursor_base_size(self, cursor_base_size):
-        self.pointer_rendering_manager.apply_cursor_base_size(cursor_base_size)
-        self.refresh_status()
-
-    def apply_stable_cursor_base_size(self):
-        self.pointer_rendering_manager.apply_stable_cursor_base_size()
-        self.refresh_status()
-
-    def apply_padded_cursor_scheme(self):
-        self.pointer_rendering_manager.apply_padded_cursor_scheme()
-        self.refresh_status()
-
-    def apply_padded_cursor_scheme_from_saved_scheme(self, name):
-        self.pointer_rendering_manager.apply_padded_cursor_scheme_from_saved_scheme(name)
-        self.refresh_status()
-
-    def apply_padded_cursor_scheme_with_glyph_size(self, glyph_size):
-        self.pointer_rendering_manager.apply_padded_cursor_scheme_with_glyph_size(glyph_size)
-        self.sync_glyph_size_actions()
-        self.refresh_status()
-
-    def restore_original_cursor_scheme(self):
-        self.pointer_rendering_manager.restore_original_cursor_scheme()
-        self.refresh_status()
-
-    def sync_glyph_size_actions(self):
-        current_glyph_size = self.pointer_rendering_manager.padded_glyph_size()
-        for action in self.glyph_size_actions:
-            action.setChecked(action.text() == f"{current_glyph_size}px")
-
     def refresh_status(self):
         self.status_action.setText(self.pointer_rendering_manager.status_text())
 
@@ -612,6 +541,7 @@ def main():
 
     pointer_rendering_manager = PointerRenderingManager()
     pointer_rendering_manager.apply_padded_cursor_scheme()
+    app.aboutToQuit.connect(pointer_rendering_manager.restore_on_exit)
 
     tray = QSystemTrayIcon(create_tray_icon())
     tray.setToolTip("Cursor Overlay")

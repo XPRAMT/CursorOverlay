@@ -19,13 +19,7 @@ Cursor Overlay 是一個 Windows 系統匣工具，用來測試是否能強制 W
 - 只在 system tray 執行。
 - 啟動時會產生並套用 padded small cursor scheme。
 - 啟動時會自動套用 `CursorBaseSize=144`，但不改變 `CursorSize`。
-- 可用 `32`、`48`、`64`、`96` px glyph size 重新產生 padded cursor。
-- 可在不改變 `CursorSize` 的情況下套用 cursor base size preset：
-  - `144`：穩定路徑。
-  - `128`：低於門檻的對照值。
-  - `32`：一般小 base size 對照值。
-- 可恢復套用 padded scheme 前的原始 cursor scheme。
-- 可從 Windows 已儲存的 cursor scheme 重新產生 padded scheme。
+- 程式退出時會恢復原始 cursor scheme，並還原預設 `CursorBaseSize=32`。
 - 可選擇透過 Windows Run registry key 設定目前使用者的開機自啟。
 
 ## 需求
@@ -50,15 +44,8 @@ python cursor_overlay.pyw
 
 ## System Tray 選單
 
-- `Apply padded small cursor scheme`：產生 144 px cursor 檔案，內部放入所選 glyph size 的圖形，並套用為目前 cursor scheme。
-- `Use saved cursor scheme`：選擇 Windows 已儲存的 cursor scheme 作為重新產生 padded cursor 的圖案來源。
-- `Glyph size`：用不同可視圖形大小重新產生 padded cursor scheme。數值越大細節越多，但看起來也越大。
-- `Restore original cursor scheme`：恢復第一次套用 padded scheme 前備份的 cursor scheme。
-- `Apply stable base size (144)`：在不改變 `CursorSize` 的情況下套用穩定的 `CursorBaseSize=144` 路徑。
-- `Test below threshold (128)`：套用 `CursorBaseSize=128`。
-- `Test unstable base size (32)`：套用 `CursorBaseSize=32`。
 - `Start with Windows`：切換登入 Windows 後自動啟動。
-- `Quit`：隱藏 tray icon，並結束程式。
+- `Quit`：恢復原始 cursor scheme、還原 `CursorBaseSize=32`、隱藏 tray icon，並結束程式。
 
 啟用 `Start with Windows` 後，每次使用者登入時都會重新套用 padded cursor scheme 和穩定 base size。
 
