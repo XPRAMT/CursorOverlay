@@ -500,6 +500,31 @@ class TrayController:
         self.status_action = QAction(self.pointer_rendering_manager.status_text())
         self.status_action.setEnabled(False)
 
+        self.saved_schemes_menu = QMenu("Use saved cursor scheme")
+        self.saved_scheme_actions = []
+        for scheme_name in sorted(self.pointer_rendering_manager.saved_cursor_schemes()):
+            action = self.saved_schemes_menu.addAction(scheme_name)
+            action.triggered.connect(
+                lambda checked=False, name=scheme_name: self.apply_padded_cursor_scheme_from_saved_scheme(name)
+            )
+            self.saved_scheme_actions.append(action)
+        if self.saved_schemes_menu.isEmpty():
+            empty_action = self.saved_schemes_menu.addAction("No saved schemes")
+            empty_action.setEnabled(False)
+            self.saved_scheme_actions.append(empty_action)
+
+        self.glyph_size_menu = QMenu("Glyph size")
+        self.glyph_size_actions = []
+        current_glyph_size = self.pointer_rendering_manager.padded_glyph_size()
+        for glyph_size in (32, 48, 64, 96):
+            action = self.glyph_size_menu.addAction(f"{glyph_size}px")
+            action.setCheckable(True)
+            action.setChecked(glyph_size == current_glyph_size)
+            action.triggered.connect(
+                lambda checked=False, size=glyph_size: self.apply_padded_cursor_scheme_with_glyph_size(size)
+            )
+            self.glyph_size_actions.append(action)
+
         self.startup_action = QAction("Start with Windows")
         self.startup_action.setCheckable(True)
         self.startup_action.setChecked(self.startup_manager.is_enabled())
@@ -509,6 +534,9 @@ class TrayController:
         self.quit_action.triggered.connect(self.quit)
 
         self.menu.addAction(self.status_action)
+        self.menu.addSeparator()
+        self.menu.addMenu(self.saved_schemes_menu)
+        self.menu.addMenu(self.glyph_size_menu)
         self.menu.addSeparator()
         self.menu.addAction(self.startup_action)
         self.menu.addSeparator()
@@ -526,6 +554,20 @@ class TrayController:
         blocker = QSignalBlocker(self.startup_action)
         self.startup_action.setChecked(self.startup_manager.is_enabled())
         del blocker
+
+    def apply_padded_cursor_scheme_from_saved_scheme(self, name):
+        self.pointer_rendering_manager.apply_padded_cursor_scheme_from_saved_scheme(name)
+        self.refresh_status()
+
+    def apply_padded_cursor_scheme_with_glyph_size(self, glyph_size):
+        self.pointer_rendering_manager.apply_padded_cursor_scheme_with_glyph_size(glyph_size)
+        self.sync_glyph_size_actions()
+        self.refresh_status()
+
+    def sync_glyph_size_actions(self):
+        current_glyph_size = self.pointer_rendering_manager.padded_glyph_size()
+        for action in self.glyph_size_actions:
+            action.setChecked(action.text() == f"{current_glyph_size}px")
 
     def refresh_status(self):
         self.status_action.setText(self.pointer_rendering_manager.status_text())
