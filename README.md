@@ -21,6 +21,8 @@ composition path around the cursor without replacing the visible Windows cursor.
 
 - Reads the live cursor position with `GetCursorInfo`.
 - Keeps a transparent topmost overlay window following the cursor position.
+- Can try forcing the normal-size cursor onto a different rendering path by
+  enabling the hidden pointer-trails setting (`MouseTrails=-1`).
 - Does not draw a custom cursor.
 - Does not hide or replace the system cursor.
 - Runs without a main window; management is done from the system tray.
@@ -49,6 +51,9 @@ menu.
 
 ## Tray Menu
 
+- `Force software cursor path`: sets `MouseTrails=-1` and broadcasts the mouse
+  setting change. This is intended to test whether size-1 cursors can avoid the
+  flickering path without using pointer size 8.
 - `Start with Windows`: toggles launch at user sign-in.
 - `Quit`: stops the overlay, hides the tray icon, and exits.
 
@@ -69,3 +74,6 @@ window. Disabling the option removes the registry value.
 - This utility is Windows-only because it depends on Win32 cursor APIs.
 - The overlay window is transparent, click-through, and topmost, so it should
   not intercept normal mouse input.
+- `Force software cursor path` changes `HKCU\Control Panel\Mouse\MouseTrails`.
+  The app stores the original value under `HKCU\Software\CursorOverlay` and
+  restores it when the option is disabled.

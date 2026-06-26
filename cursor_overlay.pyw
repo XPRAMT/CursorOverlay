@@ -13,6 +13,9 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 CURSOR_SHOWING = 0x00000001
 HWND_TOPMOST = wintypes.HWND(-1)
+HWND_BROADCAST = wintypes.HWND(0xFFFF)
+WM_SETTINGCHANGE = 0x001A
+SMTO_ABORTIFHUNG = 0x0002
 SWP_NOSIZE = 0x0001
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
@@ -20,6 +23,10 @@ OVERLAY_SIZE = 256
 OVERLAY_PADDING = OVERLAY_SIZE // 2
 STARTUP_APP_NAME = "CursorOverlay"
 RUN_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+APP_REGISTRY_PATH = r"Software\CursorOverlay"
+MOUSE_REGISTRY_PATH = r"Control Panel\Mouse"
+MOUSE_TRAILS_VALUE = "MouseTrails"
+ORIGINAL_MOUSE_TRAILS_VALUE = "OriginalMouseTrails"
 
 
 class POINT(ctypes.Structure):
@@ -50,6 +57,16 @@ user32.SetWindowPos.argtypes = [
     wintypes.UINT,
 ]
 user32.SetWindowPos.restype = wintypes.BOOL
+user32.SendMessageTimeoutW.argtypes = [
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+    wintypes.UINT,
+    wintypes.UINT,
+    ctypes.POINTER(wintypes.DWORD),
+]
+user32.SendMessageTimeoutW.restype = wintypes.LPARAM
 
 
 def raise_last_winerror(action):
@@ -93,6 +110,80 @@ class StartupManager:
                     winreg.DeleteValue(key, STARTUP_APP_NAME)
                 except FileNotFoundError:
                     pass
+
+
+class PointerRenderingManager:
+    def get_mouse_trails(self):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, MOUSE_REGISTRY_PATH, 0, winreg.KEY_READ) as key:
+                value, _ = winreg.QueryValueEx(key, MOUSE_TRAILS_VALUE)
+        except FileNotFoundError:
+            return "0"
+        return str(value)
+
+    def set_mouse_trails(self, value):
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER,
+            MOUSE_REGISTRY_PATH,
+            0,
+            winreg.KEY_SET_VALUE,
+        ) as key:
+            winreg.SetValueEx(key, MOUSE_TRAILS_VALUE, 0, winreg.REG_SZ, str(value))
+        self.broadcast_mouse_settings_changed()
+
+    def is_forced(self):
+        return self.get_mouse_trails() == "-1"
+
+    def set_forced(self, enabled):
+        if enabled:
+            self.backup_original_value()
+            self.set_mouse_trails("-1")
+        else:
+            self.set_mouse_trails(self.restore_original_value())
+
+    def backup_original_value(self):
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER,
+            APP_REGISTRY_PATH,
+            0,
+            winreg.KEY_ALL_ACCESS,
+        ) as key:
+            try:
+                winreg.QueryValueEx(key, ORIGINAL_MOUSE_TRAILS_VALUE)
+            except FileNotFoundError:
+                winreg.SetValueEx(
+                    key,
+                    ORIGINAL_MOUSE_TRAILS_VALUE,
+                    0,
+                    winreg.REG_SZ,
+                    self.get_mouse_trails(),
+                )
+
+    def restore_original_value(self):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_READ) as key:
+                value, _ = winreg.QueryValueEx(key, ORIGINAL_MOUSE_TRAILS_VALUE)
+        except FileNotFoundError:
+            return "0"
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_SET_VALUE) as key:
+            try:
+                winreg.DeleteValue(key, ORIGINAL_MOUSE_TRAILS_VALUE)
+            except FileNotFoundError:
+                pass
+        return str(value)
+
+    def broadcast_mouse_settings_changed(self):
+        result = wintypes.DWORD()
+        user32.SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            0,
+            0,
+            SMTO_ABORTIFHUNG,
+            100,
+            ctypes.byref(result),
+        )
 
 
 class CursorReader:
@@ -175,15 +266,21 @@ def create_tray_icon():
 
 
 class TrayController:
-    def __init__(self, app, overlay, tray, startup_manager):
+    def __init__(self, app, overlay, tray, startup_manager, pointer_rendering_manager):
         self.app = app
         self.overlay = overlay
         self.tray = tray
         self.startup_manager = startup_manager
+        self.pointer_rendering_manager = pointer_rendering_manager
 
         self.menu = QMenu()
         self.status_action = QAction("Cursor flicker mitigation running")
         self.status_action.setEnabled(False)
+
+        self.force_software_action = QAction("Force software cursor path")
+        self.force_software_action.setCheckable(True)
+        self.force_software_action.setChecked(self.pointer_rendering_manager.is_forced())
+        self.force_software_action.toggled.connect(self.set_force_software_cursor_path)
 
         self.startup_action = QAction("Start with Windows")
         self.startup_action.setCheckable(True)
@@ -195,6 +292,7 @@ class TrayController:
 
         self.menu.addAction(self.status_action)
         self.menu.addSeparator()
+        self.menu.addAction(self.force_software_action)
         self.menu.addAction(self.startup_action)
         self.menu.addSeparator()
         self.menu.addAction(self.quit_action)
@@ -212,6 +310,12 @@ class TrayController:
         self.startup_action.setChecked(self.startup_manager.is_enabled())
         del blocker
 
+    def set_force_software_cursor_path(self, enabled):
+        self.pointer_rendering_manager.set_forced(enabled)
+        blocker = QSignalBlocker(self.force_software_action)
+        self.force_software_action.setChecked(self.pointer_rendering_manager.is_forced())
+        del blocker
+
     def quit(self):
         self.overlay.stop()
         self.tray.hide()
@@ -226,7 +330,7 @@ def main():
 
     tray = QSystemTrayIcon(create_tray_icon())
     tray.setToolTip("Cursor Overlay")
-    tray_controller = TrayController(app, overlay, tray, StartupManager())
+    tray_controller = TrayController(app, overlay, tray, StartupManager(), PointerRenderingManager())
     tray.show()
 
     app.aboutToQuit.connect(overlay.stop)
