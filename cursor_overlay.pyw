@@ -30,7 +30,7 @@ CURSOR_BASE_SIZE_VALUE = "CursorBaseSize"
 MOUSE_TRAILS_VALUE = "MouseTrails"
 ORIGINAL_CURSORS_VALUE = "OriginalCursors"
 PADDED_SCHEME_NAME = "CursorOverlay Padded Small"
-CURSOR_ROLES = {
+FALLBACK_CURSOR_ROLES = {
     "Arrow": "aero_arrow.cur",
     "Help": "aero_helpsel.cur",
     "Hand": "aero_link.cur",
@@ -161,19 +161,32 @@ class PointerRenderingManager:
     def cursor_output_dir(self):
         return Path(__file__).resolve().parent / "generated_cursors"
 
-    def cursor_source_path(self, file_name):
-        return Path(r"C:\Windows\Cursors") / file_name
+    def fallback_cursor_source_path(self, role):
+        return Path(r"C:\Windows\Cursors") / FALLBACK_CURSOR_ROLES[role]
+
+    def resolve_cursor_path(self, value):
+        if not value:
+            return None
+        expanded = winreg.ExpandEnvironmentStrings(str(value))
+        path = Path(expanded)
+        return path if path.exists() else None
 
     def padded_cursor_path(self, role):
         return self.cursor_output_dir() / f"cursor_overlay_{role.lower()}.cur"
 
     def ensure_padded_cursor_scheme(self):
         self.cursor_output_dir().mkdir(exist_ok=True)
-        for role, source_name in CURSOR_ROLES.items():
-            source = self.cursor_source_path(source_name)
+        source_values = self.original_or_current_cursor_values()
+        for role in FALLBACK_CURSOR_ROLES:
+            source = self.resolve_cursor_path(source_values.get(role)) or self.fallback_cursor_source_path(role)
             target = self.padded_cursor_path(role)
-            if not target.exists() or target.stat().st_mtime < source.stat().st_mtime:
+            try:
                 self.write_padded_cursor(source, target)
+            except ValueError:
+                fallback_source = self.fallback_cursor_source_path(role)
+                if fallback_source == source:
+                    raise
+                self.write_padded_cursor(fallback_source, target)
 
     def write_padded_cursor(self, source, target):
         image, hot_x, hot_y = self.read_smallest_cursor_frame(source)
@@ -251,15 +264,26 @@ class PointerRenderingManager:
             except FileNotFoundError:
                 pass
             values = {"": self.get_registry_string(CURSORS_REGISTRY_PATH, "", "")}
-            for role in CURSOR_ROLES:
+            for role in FALLBACK_CURSOR_ROLES:
                 values[role] = self.get_registry_string(CURSORS_REGISTRY_PATH, role, "")
             winreg.SetValueEx(key, ORIGINAL_CURSORS_VALUE, 0, winreg.REG_SZ, json.dumps(values))
 
+    def original_or_current_cursor_values(self):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_READ) as key:
+                raw_values, _ = winreg.QueryValueEx(key, ORIGINAL_CURSORS_VALUE)
+            return json.loads(raw_values)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            values = {"": self.get_registry_string(CURSORS_REGISTRY_PATH, "", "")}
+            for role in FALLBACK_CURSOR_ROLES:
+                values[role] = self.get_registry_string(CURSORS_REGISTRY_PATH, role, "")
+            return values
+
     def apply_padded_cursor_scheme(self):
-        self.ensure_padded_cursor_scheme()
         self.backup_current_cursor_scheme()
+        self.ensure_padded_cursor_scheme()
         self.set_registry_string(CURSORS_REGISTRY_PATH, "", PADDED_SCHEME_NAME)
-        for role in CURSOR_ROLES:
+        for role in FALLBACK_CURSOR_ROLES:
             self.set_registry_string(CURSORS_REGISTRY_PATH, role, str(self.padded_cursor_path(role)))
         self.reload_cursors()
         self.apply_stable_cursor_base_size()

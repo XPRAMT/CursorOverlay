@@ -90,10 +90,15 @@ wrong and can write the pointer address into the registry.
 
 ## Padded Cursor Scheme
 
-The app reads the 32 px frame from standard Windows cursor files under
-`C:\Windows\Cursors`, places it at the top-left of a 144 px transparent canvas,
-preserves the original hotspot, and writes generated `.cur` files under
-`generated_cursors/`.
+The app first backs up the active cursor scheme, then reads the smallest frame
+from each original cursor file. It places that glyph at the top-left of a 144 px
+transparent canvas, preserves the original hotspot, and writes generated `.cur`
+files under `generated_cursors/`.
+
+If a cursor role was empty or points to a missing file, the app falls back to the
+matching default cursor under `C:\Windows\Cursors`.
+Animated `.ani` cursors are also converted through a static fallback cursor for
+that role.
 
 Those generated files are runtime output and are intentionally ignored by Git.
 

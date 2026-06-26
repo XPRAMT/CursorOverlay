@@ -70,7 +70,10 @@ SystemParametersInfoW(0x2029, 0, IntPtr(CursorBaseSize), SPIF_UPDATEINIFILE | SP
 
 ## Padded Cursor Scheme
 
-app 會讀取 `C:\Windows\Cursors` 底下標準 Windows cursor 檔案的 32 px frame，放到 144 px 透明畫布左上角，保留原本 hotspot，並把產生的 `.cur` 寫到 `generated_cursors/`。
+app 會先備份目前正在使用的 cursor scheme，然後從每個原始 cursor 檔案讀取最小 frame。接著把這個圖形放到 144 px 透明畫布左上角，保留原本 hotspot，並把產生的 `.cur` 寫到 `generated_cursors/`。
+
+如果某個 cursor role 原本是空值或指向不存在的檔案，才會 fallback 到 `C:\Windows\Cursors` 底下對應的 Windows 預設 cursor。
+如果原本是 `.ani` 動畫 cursor，該 role 也會改用靜態 fallback cursor 產生。
 
 這些檔案是 runtime output，已刻意加入 `.gitignore`，不會提交到 Git。
 
