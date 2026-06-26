@@ -5,7 +5,7 @@ from ctypes import wintypes
 from pathlib import Path
 
 from PySide6.QtCore import QSignalBlocker, QPoint, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap, QPolygon
+from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPainter, QPen, QPixmap, QPolygon
 from PySide6.QtWidgets import (
     QApplication,
     QMenu,
@@ -26,6 +26,7 @@ SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
 OVERLAY_SIZE = 256
 OVERLAY_PADDING = OVERLAY_SIZE // 2
+CURSOR_BITMAP_SIZE = 128
 STARTUP_APP_NAME = "CursorOverlay"
 RUN_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 SYSTEM_CURSOR_IDS = (
@@ -71,6 +72,38 @@ class ICONINFO(ctypes.Structure):
         ("yHotspot", wintypes.DWORD),
         ("hbmMask", wintypes.HBITMAP),
         ("hbmColor", wintypes.HBITMAP),
+    ]
+
+
+class BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ("biSize", wintypes.DWORD),
+        ("biWidth", wintypes.LONG),
+        ("biHeight", wintypes.LONG),
+        ("biPlanes", wintypes.WORD),
+        ("biBitCount", wintypes.WORD),
+        ("biCompression", wintypes.DWORD),
+        ("biSizeImage", wintypes.DWORD),
+        ("biXPelsPerMeter", wintypes.LONG),
+        ("biYPelsPerMeter", wintypes.LONG),
+        ("biClrUsed", wintypes.DWORD),
+        ("biClrImportant", wintypes.DWORD),
+    ]
+
+
+class RGBQUAD(ctypes.Structure):
+    _fields_ = [
+        ("rgbBlue", wintypes.BYTE),
+        ("rgbGreen", wintypes.BYTE),
+        ("rgbRed", wintypes.BYTE),
+        ("rgbReserved", wintypes.BYTE),
+    ]
+
+
+class BITMAPINFO(ctypes.Structure):
+    _fields_ = [
+        ("bmiHeader", BITMAPINFOHEADER),
+        ("bmiColors", RGBQUAD * 1),
     ]
 
 
@@ -133,6 +166,21 @@ user32.SetWindowPos.argtypes = [
 user32.SetWindowPos.restype = wintypes.BOOL
 gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
 gdi32.DeleteObject.restype = wintypes.BOOL
+gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+gdi32.CreateCompatibleDC.restype = wintypes.HDC
+gdi32.DeleteDC.argtypes = [wintypes.HDC]
+gdi32.DeleteDC.restype = wintypes.BOOL
+gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+gdi32.SelectObject.restype = wintypes.HGDIOBJ
+gdi32.CreateDIBSection.argtypes = [
+    wintypes.HDC,
+    ctypes.POINTER(BITMAPINFO),
+    wintypes.UINT,
+    ctypes.POINTER(ctypes.c_void_p),
+    wintypes.HANDLE,
+    wintypes.DWORD,
+]
+gdi32.CreateDIBSection.restype = wintypes.HBITMAP
 
 
 def raise_last_winerror(action):
@@ -142,6 +190,60 @@ def raise_last_winerror(action):
 
 def quote_windows_argument(value):
     return '"' + str(value).replace('"', r'\"') + '"'
+
+
+def cursor_to_pixmap(cursor):
+    hdc = user32.GetDC(None)
+    if not hdc:
+        raise_last_winerror("GetDC failed")
+
+    memory_dc = gdi32.CreateCompatibleDC(hdc)
+    if not memory_dc:
+        user32.ReleaseDC(None, hdc)
+        raise_last_winerror("CreateCompatibleDC failed")
+
+    bits = ctypes.c_void_p()
+    bitmap_info = BITMAPINFO()
+    bitmap_info.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    bitmap_info.bmiHeader.biWidth = CURSOR_BITMAP_SIZE
+    bitmap_info.bmiHeader.biHeight = -CURSOR_BITMAP_SIZE
+    bitmap_info.bmiHeader.biPlanes = 1
+    bitmap_info.bmiHeader.biBitCount = 32
+    bitmap_info.bmiHeader.biCompression = 0
+
+    bitmap = gdi32.CreateDIBSection(
+        memory_dc,
+        ctypes.byref(bitmap_info),
+        0,
+        ctypes.byref(bits),
+        None,
+        0,
+    )
+    if not bitmap:
+        gdi32.DeleteDC(memory_dc)
+        user32.ReleaseDC(None, hdc)
+        raise_last_winerror("CreateDIBSection failed")
+
+    previous_bitmap = gdi32.SelectObject(memory_dc, bitmap)
+    try:
+        if not user32.DrawIconEx(memory_dc, 0, 0, cursor, 0, 0, 0, None, DI_NORMAL):
+            raise_last_winerror("DrawIconEx failed")
+
+        byte_count = CURSOR_BITMAP_SIZE * CURSOR_BITMAP_SIZE * 4
+        image_data = ctypes.string_at(bits, byte_count)
+        image = QImage(
+            image_data,
+            CURSOR_BITMAP_SIZE,
+            CURSOR_BITMAP_SIZE,
+            CURSOR_BITMAP_SIZE * 4,
+            QImage.Format_ARGB32,
+        ).copy()
+        return QPixmap.fromImage(image)
+    finally:
+        gdi32.SelectObject(memory_dc, previous_bitmap)
+        gdi32.DeleteObject(bitmap)
+        gdi32.DeleteDC(memory_dc)
+        user32.ReleaseDC(None, hdc)
 
 
 class StartupManager:
@@ -179,10 +281,10 @@ class StartupManager:
 
 
 class CursorState:
-    def __init__(self, x, y, cursor, hotspot_x, hotspot_y, is_visible):
+    def __init__(self, x, y, pixmap, hotspot_x, hotspot_y, is_visible):
         self.x = x
         self.y = y
-        self.cursor = cursor
+        self.pixmap = pixmap
         self.hotspot_x = hotspot_x
         self.hotspot_y = hotspot_y
         self.is_visible = is_visible
@@ -211,14 +313,18 @@ class CursorReader:
         if icon_info.hbmColor:
             gdi32.DeleteObject(icon_info.hbmColor)
 
-        return CursorState(
-            info.ptScreenPos.x,
-            info.ptScreenPos.y,
-            icon,
-            int(icon_info.xHotspot),
-            int(icon_info.yHotspot),
-            bool(info.flags & CURSOR_SHOWING),
-        )
+        try:
+            pixmap = cursor_to_pixmap(icon)
+            return CursorState(
+                info.ptScreenPos.x,
+                info.ptScreenPos.y,
+                pixmap,
+                int(icon_info.xHotspot),
+                int(icon_info.yHotspot),
+                bool(info.flags & CURSOR_SHOWING),
+            )
+        finally:
+            user32.DestroyIcon(icon)
 
 
 class CursorVisibilityGuard:
@@ -343,34 +449,16 @@ class OverlayWindow(QWidget):
         )
 
     def destroy_current_icon(self):
-        if self.cursor_state and self.cursor_state.cursor:
-            user32.DestroyIcon(self.cursor_state.cursor)
         self.cursor_state = None
 
     def paintEvent(self, event):
-        if not self.cursor_state:
+        if not self.cursor_state or self.cursor_state.pixmap.isNull():
             return
 
-        hdc = user32.GetDC(int(self.winId()))
-        if not hdc:
-            return
-
-        try:
-            draw_x = OVERLAY_PADDING - self.cursor_state.hotspot_x
-            draw_y = OVERLAY_PADDING - self.cursor_state.hotspot_y
-            user32.DrawIconEx(
-                hdc,
-                draw_x,
-                draw_y,
-                self.cursor_state.cursor,
-                0,
-                0,
-                0,
-                None,
-                DI_NORMAL,
-            )
-        finally:
-            user32.ReleaseDC(int(self.winId()), hdc)
+        painter = QPainter(self)
+        draw_x = OVERLAY_PADDING - self.cursor_state.hotspot_x
+        draw_y = OVERLAY_PADDING - self.cursor_state.hotspot_y
+        painter.drawPixmap(draw_x, draw_y, self.cursor_state.pixmap)
 
 
 def create_tray_icon():
