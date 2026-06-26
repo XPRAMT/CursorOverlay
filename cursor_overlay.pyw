@@ -1,28 +1,54 @@
 import ctypes
+import json
 import sys
 import winreg
 from ctypes import wintypes
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, QPoint, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap, QPolygon
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSignalBlocker, QPoint, Qt
+from PySide6.QtGui import QAction, QColor, QIcon, QImage, QImageReader, QPainter, QPen, QPixmap, QPolygon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 SPI_PRIVATE_SET_CURSOR_BASE_SIZE = 0x2029
+SPI_SETCURSORS = 0x0057
 SPIF_UPDATEINIFILE = 0x0001
 SPIF_SENDCHANGE = 0x0002
 STABLE_CURSOR_BASE_SIZE = 144
+PADDED_CURSOR_CANVAS_SIZE = 144
+PADDED_CURSOR_GLYPH_SIZE = 32
 STARTUP_APP_NAME = "CursorOverlay"
 RUN_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+APP_REGISTRY_PATH = r"Software\CursorOverlay"
 ACCESSIBILITY_REGISTRY_PATH = r"Software\Microsoft\Accessibility"
 CURSORS_REGISTRY_PATH = r"Control Panel\Cursors"
 MOUSE_REGISTRY_PATH = r"Control Panel\Mouse"
 CURSOR_SIZE_VALUE = "CursorSize"
 CURSOR_BASE_SIZE_VALUE = "CursorBaseSize"
 MOUSE_TRAILS_VALUE = "MouseTrails"
+ORIGINAL_CURSORS_VALUE = "OriginalCursors"
+PADDED_SCHEME_NAME = "CursorOverlay Padded Small"
+CURSOR_ROLES = {
+    "Arrow": "aero_arrow.cur",
+    "Help": "aero_helpsel.cur",
+    "Hand": "aero_link.cur",
+    "No": "aero_unavail.cur",
+    "SizeNS": "aero_ns.cur",
+    "SizeWE": "aero_ew.cur",
+    "SizeNWSE": "aero_nwse.cur",
+    "SizeNESW": "aero_nesw.cur",
+    "SizeAll": "aero_move.cur",
+    "NWPen": "aero_pen.cur",
+    "UpArrow": "aero_up.cur",
+    "Pin": "aero_pin.cur",
+    "Person": "aero_person.cur",
+    "IBeam": "beam_r.cur",
+    "Crosshair": "cross_r.cur",
+    "Wait": "wait_r.cur",
+    "AppStarting": "busy_r.cur",
+}
 
 
 user32.SystemParametersInfoW.argtypes = [
@@ -92,6 +118,18 @@ class PointerRenderingManager:
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, int(value))
 
+    def get_registry_string(self, path, name, default=""):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ) as key:
+                value, _ = winreg.QueryValueEx(key, name)
+        except FileNotFoundError:
+            return default
+        return str(value)
+
+    def set_registry_string(self, path, name, value):
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, name, 0, winreg.REG_EXPAND_SZ, str(value))
+
     def cursor_size(self):
         return self.get_dword(ACCESSIBILITY_REGISTRY_PATH, CURSOR_SIZE_VALUE, 1)
 
@@ -119,6 +157,133 @@ class PointerRenderingManager:
 
     def apply_stable_cursor_base_size(self):
         self.apply_cursor_base_size(STABLE_CURSOR_BASE_SIZE)
+
+    def cursor_output_dir(self):
+        return Path(__file__).resolve().parent / "generated_cursors"
+
+    def cursor_source_path(self, file_name):
+        return Path(r"C:\Windows\Cursors") / file_name
+
+    def padded_cursor_path(self, role):
+        return self.cursor_output_dir() / f"cursor_overlay_{role.lower()}.cur"
+
+    def ensure_padded_cursor_scheme(self):
+        self.cursor_output_dir().mkdir(exist_ok=True)
+        for role, source_name in CURSOR_ROLES.items():
+            source = self.cursor_source_path(source_name)
+            target = self.padded_cursor_path(role)
+            if not target.exists() or target.stat().st_mtime < source.stat().st_mtime:
+                self.write_padded_cursor(source, target)
+
+    def write_padded_cursor(self, source, target):
+        image, hot_x, hot_y = self.read_smallest_cursor_frame(source)
+        canvas = QImage(PADDED_CURSOR_CANVAS_SIZE, PADDED_CURSOR_CANVAS_SIZE, QImage.Format_ARGB32)
+        canvas.fill(Qt.transparent)
+
+        painter = QPainter(canvas)
+        painter.drawImage(0, 0, image)
+        painter.end()
+
+        png_data = self.image_to_png_bytes(canvas)
+        target.write_bytes(self.build_cursor_file(png_data, PADDED_CURSOR_CANVAS_SIZE, hot_x, hot_y))
+
+    def read_smallest_cursor_frame(self, source):
+        data = source.read_bytes()
+        if data[:4] == b"RIFF":
+            raise ValueError(f"Animated cursor is not supported: {source}")
+
+        reserved = int.from_bytes(data[0:2], "little")
+        cursor_type = int.from_bytes(data[2:4], "little")
+        image_count = int.from_bytes(data[4:6], "little")
+        if reserved != 0 or cursor_type != 2 or image_count <= 0:
+            raise ValueError(f"Not a cursor file: {source}")
+
+        entries = []
+        for index in range(image_count):
+            offset = 6 + index * 16
+            width = data[offset] or 256
+            height = data[offset + 1] or 256
+            hot_x = int.from_bytes(data[offset + 4 : offset + 6], "little")
+            hot_y = int.from_bytes(data[offset + 6 : offset + 8], "little")
+            entries.append((width, height, hot_x, hot_y, index))
+
+        width, height, hot_x, hot_y, index = min(entries, key=lambda item: item[0] * item[1])
+        reader = QImageReader(str(source))
+        if not reader.jumpToImage(index):
+            raise ValueError(f"Cannot select cursor frame {index}: {source}")
+        image = reader.read()
+        if image.isNull():
+            raise ValueError(f"Cannot read cursor image: {source}: {reader.errorString()}")
+        if image.width() != PADDED_CURSOR_GLYPH_SIZE or image.height() != PADDED_CURSOR_GLYPH_SIZE:
+            image = image.scaled(
+                PADDED_CURSOR_GLYPH_SIZE,
+                PADDED_CURSOR_GLYPH_SIZE,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            hot_x = round(hot_x * image.width() / width)
+            hot_y = round(hot_y * image.height() / height)
+        return image.convertToFormat(QImage.Format_ARGB32), hot_x, hot_y
+
+    def image_to_png_bytes(self, image):
+        byte_array = QByteArray()
+        buffer = QBuffer(byte_array)
+        buffer.open(QIODevice.WriteOnly)
+        image.save(buffer, "PNG")
+        buffer.close()
+        return bytes(byte_array)
+
+    def build_cursor_file(self, png_data, size, hot_x, hot_y):
+        width_byte = 0 if size >= 256 else size
+        header = (0).to_bytes(2, "little") + (2).to_bytes(2, "little") + (1).to_bytes(2, "little")
+        entry = bytes([width_byte, width_byte, 0, 0])
+        entry += int(hot_x).to_bytes(2, "little")
+        entry += int(hot_y).to_bytes(2, "little")
+        entry += len(png_data).to_bytes(4, "little")
+        entry += (22).to_bytes(4, "little")
+        return header + entry + png_data
+
+    def backup_current_cursor_scheme(self):
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_ALL_ACCESS) as key:
+            try:
+                winreg.QueryValueEx(key, ORIGINAL_CURSORS_VALUE)
+                return
+            except FileNotFoundError:
+                pass
+            values = {"": self.get_registry_string(CURSORS_REGISTRY_PATH, "", "")}
+            for role in CURSOR_ROLES:
+                values[role] = self.get_registry_string(CURSORS_REGISTRY_PATH, role, "")
+            winreg.SetValueEx(key, ORIGINAL_CURSORS_VALUE, 0, winreg.REG_SZ, json.dumps(values))
+
+    def apply_padded_cursor_scheme(self):
+        self.ensure_padded_cursor_scheme()
+        self.backup_current_cursor_scheme()
+        self.set_registry_string(CURSORS_REGISTRY_PATH, "", PADDED_SCHEME_NAME)
+        for role in CURSOR_ROLES:
+            self.set_registry_string(CURSORS_REGISTRY_PATH, role, str(self.padded_cursor_path(role)))
+        self.reload_cursors()
+        self.apply_stable_cursor_base_size()
+
+    def restore_original_cursor_scheme(self):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_READ) as key:
+                raw_values, _ = winreg.QueryValueEx(key, ORIGINAL_CURSORS_VALUE)
+        except FileNotFoundError:
+            return
+        values = json.loads(raw_values)
+        self.set_registry_string(CURSORS_REGISTRY_PATH, "", values.get("", ""))
+        for role, value in values.items():
+            if role:
+                self.set_registry_string(CURSORS_REGISTRY_PATH, role, value)
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_SET_VALUE) as key:
+            try:
+                winreg.DeleteValue(key, ORIGINAL_CURSORS_VALUE)
+            except FileNotFoundError:
+                pass
+        self.reload_cursors()
+
+    def reload_cursors(self):
+        user32.SystemParametersInfoW(SPI_SETCURSORS, 0, None, SPIF_SENDCHANGE)
 
 
 def create_tray_icon():
@@ -158,6 +323,12 @@ class TrayController:
         self.status_action = QAction(self.pointer_rendering_manager.status_text())
         self.status_action.setEnabled(False)
 
+        self.padded_scheme_action = QAction("Apply padded small cursor scheme")
+        self.padded_scheme_action.triggered.connect(self.apply_padded_cursor_scheme)
+
+        self.restore_scheme_action = QAction("Restore original cursor scheme")
+        self.restore_scheme_action.triggered.connect(self.restore_original_cursor_scheme)
+
         self.stable_base_action = QAction("Apply stable base size (144)")
         self.stable_base_action.triggered.connect(self.apply_stable_cursor_base_size)
 
@@ -176,6 +347,9 @@ class TrayController:
         self.quit_action.triggered.connect(self.quit)
 
         self.menu.addAction(self.status_action)
+        self.menu.addSeparator()
+        self.menu.addAction(self.padded_scheme_action)
+        self.menu.addAction(self.restore_scheme_action)
         self.menu.addSeparator()
         self.menu.addAction(self.stable_base_action)
         self.menu.addAction(self.near_threshold_action)
@@ -206,6 +380,14 @@ class TrayController:
         self.pointer_rendering_manager.apply_stable_cursor_base_size()
         self.refresh_status()
 
+    def apply_padded_cursor_scheme(self):
+        self.pointer_rendering_manager.apply_padded_cursor_scheme()
+        self.refresh_status()
+
+    def restore_original_cursor_scheme(self):
+        self.pointer_rendering_manager.restore_original_cursor_scheme()
+        self.refresh_status()
+
     def refresh_status(self):
         self.status_action.setText(self.pointer_rendering_manager.status_text())
 
@@ -219,7 +401,7 @@ def main():
     app.setQuitOnLastWindowClosed(False)
 
     pointer_rendering_manager = PointerRenderingManager()
-    pointer_rendering_manager.apply_stable_cursor_base_size()
+    pointer_rendering_manager.apply_padded_cursor_scheme()
 
     tray = QSystemTrayIcon(create_tray_icon())
     tray.setToolTip("Cursor Overlay")
