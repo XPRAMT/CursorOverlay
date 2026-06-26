@@ -7,8 +7,9 @@ forced away from the flickering normal cursor rendering path without changing
 the pointer size to 8.
 
 The app no longer creates any overlay window, does not draw a cursor, and does
-not hide or replace the system cursor. It only toggles the hidden pointer-trails
-setting that may force Windows to use a different cursor composition path.
+not hide or replace the system cursor. It can toggle the shortest effective
+Windows pointer-trails runtime setting through `SPI_SETMOUSETRAILS(2)`, which
+may force Windows to use a different cursor composition path.
 
 ## Background
 
@@ -18,17 +19,13 @@ immediately, which strongly suggests Windows switches cursor rendering paths at
 that threshold.
 
 Pointer size 8 is not practical for normal use, so this app focuses on another
-possible path switch: `MouseTrails=-1`.
+possible path switch: the runtime pointer-trails API.
 
 ## Features
 
 - Runs only in the system tray.
-- Can set `HKCU\Control Panel\Mouse\MouseTrails` to `-1`.
-- Can switch cursor-size registry presets from the tray:
-  - `1 / 32`
-  - `8 / 144`
-  - `8 / 32`
-  - `1 / 144`
+- Can call `SPI_SETMOUSETRAILS(2)` to enable the shortest effective pointer
+  trails setting.
 - Backs up the original `MouseTrails` value before changing it.
 - Restores the original value when the option is disabled.
 - Broadcasts `WM_SETTINGCHANGE` after changing the setting.
@@ -57,24 +54,19 @@ menu.
 
 ## Tray Menu
 
-- `Set size 1 (1 / 32)`: sets `CursorSize=1`, `CursorBaseSize=32`.
-- `Set size 8 (8 / 144)`: sets `CursorSize=8`, `CursorBaseSize=144`.
-- `Hybrid test (8 / 32)`: sets `CursorSize=8`, `CursorBaseSize=32`.
-- `Hybrid test (1 / 144)`: sets `CursorSize=1`, `CursorBaseSize=144`.
-- `Force software cursor path`: sets `MouseTrails=-1` and broadcasts the mouse
-  setting change.
+- `Force software cursor path`: calls `SPI_SETMOUSETRAILS(2)`.
 - `Start with Windows`: toggles launch at user sign-in.
 - `Quit`: hides the tray icon and exits.
 
 ## Registry Changes
 
-When `Force software cursor path` is enabled:
+When `Force software cursor path` is enabled, Windows receives:
 
 ```text
-HKCU\Control Panel\Mouse\MouseTrails = -1
+SPI_SETMOUSETRAILS(2)
 ```
 
-The original value is stored here:
+The original `MouseTrails` value is stored here:
 
 ```text
 HKCU\Software\CursorOverlay\OriginalMouseTrails
@@ -82,17 +74,15 @@ HKCU\Software\CursorOverlay\OriginalMouseTrails
 
 When the option is disabled, the original value is restored.
 
-The cursor size presets modify:
-
-```text
-HKCU\SOFTWARE\Microsoft\Accessibility\CursorSize
-HKCU\Control Panel\Cursors\CursorBaseSize
-```
-
 ## Notes
 
 - This is an experimental workaround for a Windows cursor composition
-  regression.
+  regression. It may show a short pointer trail because value `1` is normalized
+  back to `0` by Windows, while `2` is the shortest effective runtime value.
+- Directly writing arbitrary `CursorSize` and `CursorBaseSize` registry
+  combinations did not change the live cursor, so those tray presets were
+  removed. The only confirmed live control in this version is
+  `SPI_SETMOUSETRAILS`.
 - It does not create a topmost overlay window, so it should not block exclusive
   fullscreen games.
 - If the setting remains enabled after an unexpected exit, run the app again and
