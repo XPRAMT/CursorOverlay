@@ -6,7 +6,7 @@ Cursor Overlay 是一個 Windows 系統匣工具，用來測試是否能強制 W
 
 這個 app 現在不建立任何 overlay 視窗、不自繪游標，也不隱藏或替換系統游標。它會測試一個未公開的 cursor base size runtime apply call，這個呼叫看起來比直接寫 registry 更接近 Windows Settings 改變指標大小時使用的路徑。
 
-實用 workaround 是 padded cursor scheme：Windows 看到的是 `CursorBaseSize=144`，但 cursor 檔案本身是在 144 px 透明畫布上放一個 32 px 小圖形。這樣可以保留穩定渲染路徑，同時避免肉眼看到巨大游標。
+實用 workaround 是 padded cursor scheme：Windows 看到的是 `CursorBaseSize=144`，但 cursor 檔案本身是在 144 px 透明畫布上放一個較小的圖形。這樣可以保留穩定渲染路徑，同時避免肉眼看到巨大游標。
 
 ## 背景
 
@@ -19,6 +19,7 @@ Cursor Overlay 是一個 Windows 系統匣工具，用來測試是否能強制 W
 - 只在 system tray 執行。
 - 啟動時會產生並套用 padded small cursor scheme。
 - 啟動時會自動套用 `CursorBaseSize=144`，但不改變 `CursorSize`。
+- 可用 `32`、`48`、`64`、`96` px glyph size 重新產生 padded cursor。
 - 可在不改變 `CursorSize` 的情況下套用 cursor base size preset：
   - `144`：穩定路徑。
   - `128`：低於門檻的對照值。
@@ -49,8 +50,9 @@ python cursor_overlay.pyw
 
 ## System Tray 選單
 
-- `Apply padded small cursor scheme`：產生 144 px cursor 檔案，內部放 32 px 小圖形，並套用為目前 cursor scheme。
+- `Apply padded small cursor scheme`：產生 144 px cursor 檔案，內部放入所選 glyph size 的圖形，並套用為目前 cursor scheme。
 - `Use saved cursor scheme`：選擇 Windows 已儲存的 cursor scheme 作為重新產生 padded cursor 的圖案來源。
+- `Glyph size`：用不同可視圖形大小重新產生 padded cursor scheme。數值越大細節越多，但看起來也越大。
 - `Restore original cursor scheme`：恢復第一次套用 padded scheme 前備份的 cursor scheme。
 - `Apply stable base size (144)`：在不改變 `CursorSize` 的情況下套用穩定的 `CursorBaseSize=144` 路徑。
 - `Test below threshold (128)`：套用 `CursorBaseSize=128`。
@@ -72,7 +74,7 @@ SystemParametersInfoW(0x2029, 0, IntPtr(CursorBaseSize), SPIF_UPDATEINIFILE | SP
 
 ## Padded Cursor Scheme
 
-app 會先備份目前正在使用的 cursor scheme，然後從每個原始 cursor 檔案讀取最小 frame。接著把這個圖形放到 144 px 透明畫布左上角，保留原本 hotspot，並把產生的 `.cur` 或 `.ani` 寫到 `generated_cursors/`。
+app 會先備份目前正在使用的 cursor scheme，然後從每個原始 cursor 檔案讀取最符合所選 glyph size 的 frame。接著把這個圖形放到 144 px 透明畫布左上角，保留原本 hotspot，並把產生的 `.cur` 或 `.ani` 寫到 `generated_cursors/`。預設 glyph size 是 `48` px。
 
 如果某個 cursor role 原本是空值或指向不存在的檔案，才會 fallback 到 `C:\Windows\Cursors` 底下對應的 Windows 預設 cursor。
 如果原本是 `.ani` 動畫 cursor，會重建成 padded `.ani`：保留原本 RIFF 動畫結構、frame rate、frame sequence，只把每個內嵌 cursor frame 轉成 144 px padded 格式。

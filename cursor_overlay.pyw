@@ -18,7 +18,7 @@ SPIF_UPDATEINIFILE = 0x0001
 SPIF_SENDCHANGE = 0x0002
 STABLE_CURSOR_BASE_SIZE = 144
 PADDED_CURSOR_CANVAS_SIZE = 144
-PADDED_CURSOR_GLYPH_SIZE = 32
+DEFAULT_PADDED_CURSOR_GLYPH_SIZE = 48
 STARTUP_APP_NAME = "CursorOverlay"
 RUN_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APP_REGISTRY_PATH = r"Software\CursorOverlay"
@@ -29,6 +29,7 @@ CURSOR_SIZE_VALUE = "CursorSize"
 CURSOR_BASE_SIZE_VALUE = "CursorBaseSize"
 MOUSE_TRAILS_VALUE = "MouseTrails"
 ORIGINAL_CURSORS_VALUE = "OriginalCursors"
+PADDED_GLYPH_SIZE_VALUE = "PaddedGlyphSize"
 PADDED_SCHEME_NAME = "CursorOverlay Padded Small"
 FALLBACK_CURSOR_ROLES = {
     "Arrow": "aero_arrow.cur",
@@ -122,6 +123,7 @@ class PointerRenderingManager:
         return (
             f"CursorSize={self.cursor_size()}  "
             f"CursorBaseSize={self.cursor_base_size()}  "
+            f"GlyphSize={self.padded_glyph_size()}  "
             f"MouseTrails={self.get_mouse_trails()}"
         )
 
@@ -148,6 +150,13 @@ class PointerRenderingManager:
     def set_registry_string(self, path, name, value):
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, name, 0, winreg.REG_EXPAND_SZ, str(value))
+
+    def padded_glyph_size(self):
+        value = self.get_dword(APP_REGISTRY_PATH, PADDED_GLYPH_SIZE_VALUE, DEFAULT_PADDED_CURSOR_GLYPH_SIZE)
+        return max(16, min(PADDED_CURSOR_CANVAS_SIZE, value))
+
+    def set_padded_glyph_size(self, value):
+        self.set_dword(APP_REGISTRY_PATH, PADDED_GLYPH_SIZE_VALUE, value)
 
     def cursor_size(self):
         return self.get_dword(ACCESSIBILITY_REGISTRY_PATH, CURSOR_SIZE_VALUE, 1)
@@ -220,7 +229,7 @@ class PointerRenderingManager:
         target.write_bytes(self.build_padded_cursor_from_data(data, source))
 
     def build_padded_cursor_from_data(self, data, source):
-        image, hot_x, hot_y = self.read_smallest_cursor_frame(data, source)
+        image, hot_x, hot_y = self.read_best_cursor_frame(data, source, self.padded_glyph_size())
         canvas = QImage(PADDED_CURSOR_CANVAS_SIZE, PADDED_CURSOR_CANVAS_SIZE, QImage.Format_ARGB32)
         canvas.fill(Qt.transparent)
 
@@ -231,7 +240,7 @@ class PointerRenderingManager:
         png_data = self.image_to_png_bytes(canvas)
         return self.build_cursor_file(png_data, PADDED_CURSOR_CANVAS_SIZE, hot_x, hot_y)
 
-    def read_smallest_cursor_frame(self, data, source):
+    def read_best_cursor_frame(self, data, source, target_size):
         reserved = int.from_bytes(data[0:2], "little")
         cursor_type = int.from_bytes(data[2:4], "little")
         image_count = int.from_bytes(data[4:6], "little")
@@ -247,7 +256,14 @@ class PointerRenderingManager:
             hot_y = int.from_bytes(data[offset + 6 : offset + 8], "little")
             entries.append((width, height, hot_x, hot_y, index))
 
-        width, height, hot_x, hot_y, index = min(entries, key=lambda item: item[0] * item[1])
+        width, height, hot_x, hot_y, index = min(
+            entries,
+            key=lambda item: (
+                item[0] < target_size or item[1] < target_size,
+                abs(item[0] - target_size) + abs(item[1] - target_size),
+                item[0] * item[1],
+            ),
+        )
         byte_array = QByteArray(data)
         buffer = QBuffer(byte_array)
         buffer.open(QIODevice.ReadOnly)
@@ -257,16 +273,21 @@ class PointerRenderingManager:
         image = reader.read()
         if image.isNull():
             raise ValueError(f"Cannot read cursor image: {source}: {reader.errorString()}")
-        if image.width() != PADDED_CURSOR_GLYPH_SIZE or image.height() != PADDED_CURSOR_GLYPH_SIZE:
+        if image.width() != target_size or image.height() != target_size:
+            original_width = image.width()
+            original_height = image.height()
             image = image.scaled(
-                PADDED_CURSOR_GLYPH_SIZE,
-                PADDED_CURSOR_GLYPH_SIZE,
+                target_size,
+                target_size,
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
-            hot_x = round(hot_x * image.width() / width)
-            hot_y = round(hot_y * image.height() / height)
+            hot_x = round(hot_x * image.width() / original_width)
+            hot_y = round(hot_y * image.height() / original_height)
         return image.convertToFormat(QImage.Format_ARGB32), hot_x, hot_y
+
+    def read_smallest_cursor_frame(self, data, source):
+        return self.read_best_cursor_frame(data, source, 16)
 
     def build_padded_ani(self, data, source):
         if data[:4] != b"RIFF" or data[8:12] != b"ACON":
@@ -408,6 +429,10 @@ class PointerRenderingManager:
         self.set_source_cursor_scheme(name)
         self.apply_padded_cursor_scheme()
 
+    def apply_padded_cursor_scheme_with_glyph_size(self, glyph_size):
+        self.set_padded_glyph_size(glyph_size)
+        self.apply_padded_cursor_scheme()
+
     def restore_original_cursor_scheme(self):
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_READ) as key:
@@ -483,6 +508,18 @@ class TrayController:
             empty_action.setEnabled(False)
             self.saved_scheme_actions.append(empty_action)
 
+        self.glyph_size_menu = QMenu("Glyph size")
+        self.glyph_size_actions = []
+        current_glyph_size = self.pointer_rendering_manager.padded_glyph_size()
+        for glyph_size in (32, 48, 64, 96):
+            action = self.glyph_size_menu.addAction(f"{glyph_size}px")
+            action.setCheckable(True)
+            action.setChecked(glyph_size == current_glyph_size)
+            action.triggered.connect(
+                lambda checked=False, size=glyph_size: self.apply_padded_cursor_scheme_with_glyph_size(size)
+            )
+            self.glyph_size_actions.append(action)
+
         self.restore_scheme_action = QAction("Restore original cursor scheme")
         self.restore_scheme_action.triggered.connect(self.restore_original_cursor_scheme)
 
@@ -507,6 +544,7 @@ class TrayController:
         self.menu.addSeparator()
         self.menu.addAction(self.padded_scheme_action)
         self.menu.addMenu(self.saved_schemes_menu)
+        self.menu.addMenu(self.glyph_size_menu)
         self.menu.addAction(self.restore_scheme_action)
         self.menu.addSeparator()
         self.menu.addAction(self.stable_base_action)
@@ -546,9 +584,19 @@ class TrayController:
         self.pointer_rendering_manager.apply_padded_cursor_scheme_from_saved_scheme(name)
         self.refresh_status()
 
+    def apply_padded_cursor_scheme_with_glyph_size(self, glyph_size):
+        self.pointer_rendering_manager.apply_padded_cursor_scheme_with_glyph_size(glyph_size)
+        self.sync_glyph_size_actions()
+        self.refresh_status()
+
     def restore_original_cursor_scheme(self):
         self.pointer_rendering_manager.restore_original_cursor_scheme()
         self.refresh_status()
+
+    def sync_glyph_size_actions(self):
+        current_glyph_size = self.pointer_rendering_manager.padded_glyph_size()
+        for action in self.glyph_size_actions:
+            action.setChecked(action.text() == f"{current_glyph_size}px")
 
     def refresh_status(self):
         self.status_action.setText(self.pointer_rendering_manager.status_text())

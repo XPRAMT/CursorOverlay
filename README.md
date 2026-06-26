@@ -11,7 +11,7 @@ runtime apply call that appears to be closer to the path used when Windows
 Settings changes the pointer size.
 
 The practical workaround is a padded cursor scheme: Windows receives
-`CursorBaseSize=144`, but the cursor files contain a small 32 px glyph on a
+`CursorBaseSize=144`, but the cursor files contain a smaller glyph on a
 144 px transparent canvas. This keeps the stable rendering path while avoiding a
 visually huge pointer.
 
@@ -30,6 +30,7 @@ gate. The flicker stops only when `CursorBaseSize` is at least `144`.
 - Runs only in the system tray.
 - Generates and applies a padded small cursor scheme at launch.
 - Applies `CursorBaseSize=144` at launch without changing `CursorSize`.
+- Can regenerate padded cursors at `32`, `48`, `64`, or `96` px glyph sizes.
 - Can apply cursor-base-size presets without changing `CursorSize`:
   - `144`: stable path.
   - `128`: below-threshold comparison.
@@ -64,9 +65,11 @@ stable `CursorBaseSize=144` path.
 ## Tray Menu
 
 - `Apply padded small cursor scheme`: generates 144 px cursor files with a
-  small 32 px glyph and applies them as the active cursor scheme.
+  selected-size glyph and applies them as the active cursor scheme.
 - `Use saved cursor scheme`: selects a saved Windows cursor scheme as the image
   source for regenerated padded cursors.
+- `Glyph size`: regenerates the padded cursor scheme at a different visible
+  glyph size. Larger values preserve more detail but look larger.
 - `Restore original cursor scheme`: restores the cursor scheme backed up before
   the padded scheme was first applied.
 - `Apply stable base size (144)`: applies the stable `CursorBaseSize=144`
@@ -94,9 +97,10 @@ wrong and can write the pointer address into the registry.
 ## Padded Cursor Scheme
 
 The app first backs up the active cursor scheme, then reads the smallest frame
-from each original cursor file. It places that glyph at the top-left of a 144 px
-transparent canvas, preserves the original hotspot, and writes generated `.cur`
-or `.ani` files under `generated_cursors/`.
+that best matches the selected glyph size from each original cursor file. It
+places that glyph at the top-left of a 144 px transparent canvas, preserves the
+original hotspot, and writes generated `.cur` or `.ani` files under
+`generated_cursors/`. The default glyph size is `48` px.
 
 If a cursor role was empty or points to a missing file, the app falls back to the
 matching default cursor under `C:\Windows\Cursors`.
