@@ -3,8 +3,7 @@
 English | [繁體中文](README.zh-TW.md)
 
 Cursor Overlay is a Windows tray utility for testing whether Windows can be
-forced away from the flickering normal cursor rendering path without changing
-the pointer size to 8.
+forced away from the flickering normal cursor rendering path.
 
 The app no longer creates any overlay window, does not draw a cursor, and does
 not hide or replace the system cursor. It tests an undocumented cursor-base-size
@@ -18,17 +17,17 @@ and sometimes become semi-transparent. Pointer size 8 or higher stops the issue
 immediately, which strongly suggests Windows switches cursor rendering paths at
 that threshold.
 
-Pointer size 8 is not practical for normal use, so this app tests which
-`CursorBaseSize` threshold is required after entering the size-8 cursor path.
+Local testing shows that the visible `CursorSize` value is not the decisive
+gate. The flicker stops only when `CursorBaseSize` is at least `144`.
 
 ## Features
 
 - Runs only in the system tray.
-- Can apply cursor-path threshold presets:
-  - `1 / 32`: normal small pointer baseline.
-  - `7 / 144`: gate test for whether `CursorSize` must be at least 8.
-  - `8 / 144`: known stable large pointer path.
-  - `8 / 32` through `8 / 128`: threshold tests.
+- Applies `CursorBaseSize=144` at launch without changing `CursorSize`.
+- Can apply cursor-base-size presets without changing `CursorSize`:
+  - `144`: stable path.
+  - `128`: below-threshold comparison.
+  - `32`: normal small-base comparison.
 - Optional per-user startup launch through the Windows Run registry key.
 
 ## Requirements
@@ -50,23 +49,23 @@ python cursor_overlay.pyw
 ```
 
 The application starts in the system tray. Right-click the tray icon to open the
-menu.
+menu. On launch, it automatically applies the stable `CursorBaseSize=144` path.
 
 ## Tray Menu
 
-- `Apply size 1 baseline (1 / 32)`: writes `CursorSize=1` and applies
-  `CursorBaseSize=32`.
-- `Gate test (7 / 144)`: writes `CursorSize=7` and applies `CursorBaseSize=144`.
-- `Apply size 8 stable (8 / 144)`: writes `CursorSize=8` and applies
-  `CursorBaseSize=144`.
-- `Threshold test (8 / N)`: writes `CursorSize=8` and applies a test
-  `CursorBaseSize` from `32` to `128`.
+- `Apply stable base size (144)`: applies the stable `CursorBaseSize=144`
+  path without changing `CursorSize`.
+- `Test below threshold (128)`: applies `CursorBaseSize=128`.
+- `Test unstable base size (32)`: applies `CursorBaseSize=32`.
 - `Start with Windows`: toggles launch at user sign-in.
 - `Quit`: hides the tray icon and exits.
 
+When `Start with Windows` is enabled, the stable base size is applied again at
+user sign-in.
+
 ## Runtime Apply Path
 
-The app writes `CursorSize` normally, then calls:
+The app leaves `CursorSize` unchanged and calls:
 
 ```text
 SystemParametersInfoW(0x2029, 0, IntPtr(CursorBaseSize), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
@@ -85,9 +84,10 @@ wrong and can write the pointer address into the registry.
   path switch as pointer size 8.
 - `SystemParametersInfoW(0x2029, 0, IntPtr(baseSize), ...)` does change
   `CursorBaseSize` live.
-- `8 / 144` triggers the stable path and does not flicker.
-- `8 / 32` still flickers, so `CursorSize=8` alone is not enough. The next test
-  target is the minimum stable `CursorBaseSize`.
+- The first value is not decisive: `7 / 144` and `8 / 144` both follow the
+  stable behavior.
+- The second value is decisive: `CursorBaseSize >= 144` does not flicker, while
+  values below `144` still flicker.
 
 ## Notes
 

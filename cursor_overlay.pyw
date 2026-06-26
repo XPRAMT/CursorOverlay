@@ -14,6 +14,7 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 SPI_PRIVATE_SET_CURSOR_BASE_SIZE = 0x2029
 SPIF_UPDATEINIFILE = 0x0001
 SPIF_SENDCHANGE = 0x0002
+STABLE_CURSOR_BASE_SIZE = 144
 STARTUP_APP_NAME = "CursorOverlay"
 RUN_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 ACCESSIBILITY_REGISTRY_PATH = r"Software\Microsoft\Accessibility"
@@ -105,8 +106,7 @@ class PointerRenderingManager:
             return "0"
         return str(value)
 
-    def apply_cursor_path_candidate(self, cursor_size, cursor_base_size):
-        self.set_dword(ACCESSIBILITY_REGISTRY_PATH, CURSOR_SIZE_VALUE, cursor_size)
+    def apply_cursor_base_size(self, cursor_base_size):
         ctypes.set_last_error(0)
         if not user32.SystemParametersInfoW(
             SPI_PRIVATE_SET_CURSOR_BASE_SIZE,
@@ -116,6 +116,9 @@ class PointerRenderingManager:
         ):
             error = ctypes.get_last_error()
             raise OSError(error, f"SystemParametersInfoW(0x2029, {cursor_base_size}) failed")
+
+    def apply_stable_cursor_base_size(self):
+        self.apply_cursor_base_size(STABLE_CURSOR_BASE_SIZE)
 
 
 def create_tray_icon():
@@ -155,22 +158,14 @@ class TrayController:
         self.status_action = QAction(self.pointer_rendering_manager.status_text())
         self.status_action.setEnabled(False)
 
-        self.baseline_size1_action = QAction("Apply size 1 baseline (1 / 32)")
-        self.baseline_size1_action.triggered.connect(lambda: self.apply_cursor_candidate(1, 32))
+        self.stable_base_action = QAction("Apply stable base size (144)")
+        self.stable_base_action.triggered.connect(self.apply_stable_cursor_base_size)
 
-        self.gate_size7_action = QAction("Gate test (7 / 144)")
-        self.gate_size7_action.triggered.connect(lambda: self.apply_cursor_candidate(7, 144))
+        self.near_threshold_action = QAction("Test below threshold (128)")
+        self.near_threshold_action.triggered.connect(lambda: self.apply_cursor_base_size(128))
 
-        self.stable_size8_action = QAction("Apply size 8 stable (8 / 144)")
-        self.stable_size8_action.triggered.connect(lambda: self.apply_cursor_candidate(8, 144))
-
-        self.threshold_actions = []
-        for cursor_base_size in (32, 48, 64, 80, 96, 112, 128):
-            action = QAction(f"Threshold test (8 / {cursor_base_size})")
-            action.triggered.connect(
-                lambda checked=False, base_size=cursor_base_size: self.apply_cursor_candidate(8, base_size)
-            )
-            self.threshold_actions.append(action)
+        self.unstable_base_action = QAction("Test unstable base size (32)")
+        self.unstable_base_action.triggered.connect(lambda: self.apply_cursor_base_size(32))
 
         self.startup_action = QAction("Start with Windows")
         self.startup_action.setCheckable(True)
@@ -182,11 +177,9 @@ class TrayController:
 
         self.menu.addAction(self.status_action)
         self.menu.addSeparator()
-        self.menu.addAction(self.baseline_size1_action)
-        self.menu.addAction(self.gate_size7_action)
-        self.menu.addAction(self.stable_size8_action)
-        for action in self.threshold_actions:
-            self.menu.addAction(action)
+        self.menu.addAction(self.stable_base_action)
+        self.menu.addAction(self.near_threshold_action)
+        self.menu.addAction(self.unstable_base_action)
         self.menu.addSeparator()
         self.menu.addAction(self.startup_action)
         self.menu.addSeparator()
@@ -205,8 +198,12 @@ class TrayController:
         self.startup_action.setChecked(self.startup_manager.is_enabled())
         del blocker
 
-    def apply_cursor_candidate(self, cursor_size, cursor_base_size):
-        self.pointer_rendering_manager.apply_cursor_path_candidate(cursor_size, cursor_base_size)
+    def apply_cursor_base_size(self, cursor_base_size):
+        self.pointer_rendering_manager.apply_cursor_base_size(cursor_base_size)
+        self.refresh_status()
+
+    def apply_stable_cursor_base_size(self):
+        self.pointer_rendering_manager.apply_stable_cursor_base_size()
         self.refresh_status()
 
     def refresh_status(self):
@@ -221,9 +218,12 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
+    pointer_rendering_manager = PointerRenderingManager()
+    pointer_rendering_manager.apply_stable_cursor_base_size()
+
     tray = QSystemTrayIcon(create_tray_icon())
     tray.setToolTip("Cursor Overlay")
-    tray_controller = TrayController(app, tray, StartupManager(), PointerRenderingManager())
+    tray_controller = TrayController(app, tray, StartupManager(), pointer_rendering_manager)
     tray.show()
 
     app.tray_controller = tray_controller
