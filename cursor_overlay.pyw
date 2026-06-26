@@ -212,6 +212,7 @@ class OverlayWindow(QWidget):
         self.visibility_guard = visibility_guard
         self.cursor_state = None
         self.hide_original = True
+        self.draw_overlay = True
 
         self.setWindowFlags(
             Qt.FramelessWindowHint
@@ -229,8 +230,7 @@ class OverlayWindow(QWidget):
 
     def start(self):
         self.show()
-        if self.hide_original:
-            self.visibility_guard.hide()
+        self.apply_cursor_visibility()
         self.timer.start()
 
     def stop(self):
@@ -241,12 +241,30 @@ class OverlayWindow(QWidget):
 
     def set_hide_original(self, enabled):
         self.hide_original = enabled
-        if enabled and self.isVisible():
+        self.apply_cursor_visibility()
+
+    def set_draw_overlay(self, enabled):
+        self.draw_overlay = enabled
+        if enabled:
+            self.show()
+        else:
+            self.destroy_current_icon()
+            self.hide()
+        self.apply_cursor_visibility()
+        self.update()
+
+    def apply_cursor_visibility(self):
+        if self.hide_original and self.draw_overlay and self.isVisible():
             self.visibility_guard.hide()
         else:
             self.visibility_guard.show()
 
     def refresh_cursor(self):
+        if not self.draw_overlay:
+            self.destroy_current_icon()
+            self.update()
+            return
+
         state = self.reader.read()
         self.destroy_current_icon()
         self.cursor_state = state
@@ -334,6 +352,11 @@ class TrayController:
         self.status_action = QAction("Cursor overlay running")
         self.status_action.setEnabled(False)
 
+        self.draw_action = QAction("Draw overlay cursor")
+        self.draw_action.setCheckable(True)
+        self.draw_action.setChecked(True)
+        self.draw_action.toggled.connect(self.overlay.set_draw_overlay)
+
         self.hide_action = QAction("Hide original cursor")
         self.hide_action.setCheckable(True)
         self.hide_action.setChecked(True)
@@ -351,6 +374,7 @@ class TrayController:
         self.menu.aboutToHide.connect(self.restore_overlay_visibility)
         self.menu.addAction(self.status_action)
         self.menu.addSeparator()
+        self.menu.addAction(self.draw_action)
         self.menu.addAction(self.hide_action)
         self.menu.addAction(self.startup_action)
         self.menu.addSeparator()
@@ -364,8 +388,7 @@ class TrayController:
             self.menu.popup(self.tray.geometry().center())
 
     def restore_overlay_visibility(self):
-        if self.hide_action.isChecked():
-            self.overlay.set_hide_original(True)
+        self.overlay.apply_cursor_visibility()
 
     def set_startup_enabled(self, enabled):
         self.startup_manager.set_enabled(enabled)

@@ -22,6 +22,7 @@ hides the original cursor.
 - Reads the active cursor style and hotspot with `CopyIcon` and `GetIconInfo`.
 - Draws the cursor overlay at the original cursor position with `DrawIconEx`.
 - Runs without a main window; management is done from the system tray.
+- Can enable or disable the self-drawn overlay cursor from the tray menu.
 - Can hide or restore the original system cursor from the tray menu.
 - Temporarily restores the system cursor while the tray menu is open.
 - Optional per-user startup launch through the Windows Run registry key.
@@ -41,7 +42,7 @@ python -m pip install -r requirements.txt
 ## Run
 
 ```powershell
-python cursor_overlay.py
+python cursor_overlay.pyw
 ```
 
 The application starts in the system tray. Right-click the tray icon to open the
@@ -49,7 +50,9 @@ menu.
 
 ## Tray Menu
 
-- `Hide original cursor`: hides or restores the original system cursor.
+- `Draw overlay cursor`: enables or disables the self-drawn cursor overlay.
+- `Hide original cursor`: hides or restores the original system cursor. If the
+  overlay cursor is disabled, the original cursor is restored automatically.
 - `Start with Windows`: toggles launch at user sign-in.
 - `Quit`: stops the overlay, restores the system cursor, hides the tray icon,
   and exits.
