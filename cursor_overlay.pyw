@@ -1,4 +1,5 @@
 import ctypes
+import subprocess
 import sys
 import winreg
 from ctypes import wintypes
@@ -17,7 +18,11 @@ SMTO_ABORTIFHUNG = 0x0002
 STARTUP_APP_NAME = "CursorOverlay"
 RUN_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APP_REGISTRY_PATH = r"Software\CursorOverlay"
+ACCESSIBILITY_REGISTRY_PATH = r"Software\Microsoft\Accessibility"
+CURSORS_REGISTRY_PATH = r"Control Panel\Cursors"
 MOUSE_REGISTRY_PATH = r"Control Panel\Mouse"
+CURSOR_SIZE_VALUE = "CursorSize"
+CURSOR_BASE_SIZE_VALUE = "CursorBaseSize"
 MOUSE_TRAILS_VALUE = "MouseTrails"
 ORIGINAL_MOUSE_TRAILS_VALUE = "OriginalMouseTrails"
 
@@ -73,6 +78,36 @@ class StartupManager:
 
 
 class PointerRenderingManager:
+    def get_dword(self, path, name, default=0):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ) as key:
+                value, _ = winreg.QueryValueEx(key, name)
+        except FileNotFoundError:
+            return default
+        return int(value)
+
+    def set_dword(self, path, name, value):
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, int(value))
+
+    def cursor_size(self):
+        return self.get_dword(ACCESSIBILITY_REGISTRY_PATH, CURSOR_SIZE_VALUE, 1)
+
+    def cursor_base_size(self):
+        return self.get_dword(CURSORS_REGISTRY_PATH, CURSOR_BASE_SIZE_VALUE, 32)
+
+    def status_text(self):
+        return (
+            f"CursorSize={self.cursor_size()}  "
+            f"CursorBaseSize={self.cursor_base_size()}  "
+            f"MouseTrails={self.get_mouse_trails()}"
+        )
+
+    def set_cursor_values(self, cursor_size, cursor_base_size, mouse_trails="0"):
+        self.set_dword(ACCESSIBILITY_REGISTRY_PATH, CURSOR_SIZE_VALUE, cursor_size)
+        self.set_dword(CURSORS_REGISTRY_PATH, CURSOR_BASE_SIZE_VALUE, cursor_base_size)
+        self.set_mouse_trails(mouse_trails)
+
     def get_mouse_trails(self):
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, MOUSE_REGISTRY_PATH, 0, winreg.KEY_READ) as key:
@@ -144,6 +179,7 @@ class PointerRenderingManager:
             100,
             ctypes.byref(result),
         )
+        subprocess.run(["rundll32.exe", "user32.dll,UpdatePerUserSystemParameters"], check=False)
 
 
 def create_tray_icon():
@@ -180,8 +216,20 @@ class TrayController:
         self.pointer_rendering_manager = pointer_rendering_manager
 
         self.menu = QMenu()
-        self.status_action = QAction("Software cursor path control")
+        self.status_action = QAction(self.pointer_rendering_manager.status_text())
         self.status_action.setEnabled(False)
+
+        self.size1_action = QAction("Set size 1 (1 / 32)")
+        self.size1_action.triggered.connect(lambda: self.apply_cursor_values(1, 32, "0"))
+
+        self.size8_action = QAction("Set size 8 (8 / 144)")
+        self.size8_action.triggered.connect(lambda: self.apply_cursor_values(8, 144, "0"))
+
+        self.hybrid_8_32_action = QAction("Hybrid test (8 / 32)")
+        self.hybrid_8_32_action.triggered.connect(lambda: self.apply_cursor_values(8, 32, "0"))
+
+        self.hybrid_1_144_action = QAction("Hybrid test (1 / 144)")
+        self.hybrid_1_144_action.triggered.connect(lambda: self.apply_cursor_values(1, 144, "0"))
 
         self.force_software_action = QAction("Force software cursor path")
         self.force_software_action.setCheckable(True)
@@ -197,6 +245,11 @@ class TrayController:
         self.quit_action.triggered.connect(self.quit)
 
         self.menu.addAction(self.status_action)
+        self.menu.addSeparator()
+        self.menu.addAction(self.size1_action)
+        self.menu.addAction(self.size8_action)
+        self.menu.addAction(self.hybrid_8_32_action)
+        self.menu.addAction(self.hybrid_1_144_action)
         self.menu.addSeparator()
         self.menu.addAction(self.force_software_action)
         self.menu.addAction(self.startup_action)
@@ -216,11 +269,19 @@ class TrayController:
         self.startup_action.setChecked(self.startup_manager.is_enabled())
         del blocker
 
+    def apply_cursor_values(self, cursor_size, cursor_base_size, mouse_trails):
+        self.pointer_rendering_manager.set_cursor_values(cursor_size, cursor_base_size, mouse_trails)
+        self.refresh_status()
+
     def set_force_software_cursor_path(self, enabled):
         self.pointer_rendering_manager.set_forced(enabled)
         blocker = QSignalBlocker(self.force_software_action)
         self.force_software_action.setChecked(self.pointer_rendering_manager.is_forced())
         del blocker
+        self.refresh_status()
+
+    def refresh_status(self):
+        self.status_action.setText(self.pointer_rendering_manager.status_text())
 
     def quit(self):
         self.tray.hide()

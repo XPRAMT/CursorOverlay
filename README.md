@@ -24,6 +24,11 @@ possible path switch: `MouseTrails=-1`.
 
 - Runs only in the system tray.
 - Can set `HKCU\Control Panel\Mouse\MouseTrails` to `-1`.
+- Can switch cursor-size registry presets from the tray:
+  - `1 / 32`
+  - `8 / 144`
+  - `8 / 32`
+  - `1 / 144`
 - Backs up the original `MouseTrails` value before changing it.
 - Restores the original value when the option is disabled.
 - Broadcasts `WM_SETTINGCHANGE` after changing the setting.
@@ -52,6 +57,10 @@ menu.
 
 ## Tray Menu
 
+- `Set size 1 (1 / 32)`: sets `CursorSize=1`, `CursorBaseSize=32`.
+- `Set size 8 (8 / 144)`: sets `CursorSize=8`, `CursorBaseSize=144`.
+- `Hybrid test (8 / 32)`: sets `CursorSize=8`, `CursorBaseSize=32`.
+- `Hybrid test (1 / 144)`: sets `CursorSize=1`, `CursorBaseSize=144`.
 - `Force software cursor path`: sets `MouseTrails=-1` and broadcasts the mouse
   setting change.
 - `Start with Windows`: toggles launch at user sign-in.
@@ -72,6 +81,13 @@ HKCU\Software\CursorOverlay\OriginalMouseTrails
 ```
 
 When the option is disabled, the original value is restored.
+
+The cursor size presets modify:
+
+```text
+HKCU\SOFTWARE\Microsoft\Accessibility\CursorSize
+HKCU\Control Panel\Cursors\CursorBaseSize
+```
 
 ## Notes
 
