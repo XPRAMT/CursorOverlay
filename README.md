@@ -18,17 +18,17 @@ and sometimes become semi-transparent. Pointer size 8 or higher stops the issue
 immediately, which strongly suggests Windows switches cursor rendering paths at
 that threshold.
 
-Pointer size 8 is not practical for normal use, so this app tests whether
-`CursorSize=8` can be kept while applying a smaller `CursorBaseSize` through the
-runtime cursor apply path.
+Pointer size 8 is not practical for normal use, so this app tests which
+`CursorBaseSize` threshold is required after entering the size-8 cursor path.
 
 ## Features
 
 - Runs only in the system tray.
-- Can apply three cursor-path test presets:
+- Can apply cursor-path threshold presets:
   - `1 / 32`: normal small pointer baseline.
+  - `7 / 144`: gate test for whether `CursorSize` must be at least 8.
   - `8 / 144`: known stable large pointer path.
-  - `8 / 32`: small stable candidate.
+  - `8 / 32` through `8 / 128`: threshold tests.
 - Optional per-user startup launch through the Windows Run registry key.
 
 ## Requirements
@@ -56,10 +56,11 @@ menu.
 
 - `Apply size 1 baseline (1 / 32)`: writes `CursorSize=1` and applies
   `CursorBaseSize=32`.
+- `Gate test (7 / 144)`: writes `CursorSize=7` and applies `CursorBaseSize=144`.
 - `Apply size 8 stable (8 / 144)`: writes `CursorSize=8` and applies
   `CursorBaseSize=144`.
-- `Apply small stable candidate (8 / 32)`: writes `CursorSize=8` and applies
-  `CursorBaseSize=32`.
+- `Threshold test (8 / N)`: writes `CursorSize=8` and applies a test
+  `CursorBaseSize` from `32` to `128`.
 - `Start with Windows`: toggles launch at user sign-in.
 - `Quit`: hides the tray icon and exits.
 
@@ -83,8 +84,10 @@ wrong and can write the pointer address into the registry.
   but it does not meaningfully reduce the flicker. It is not the same rendering
   path switch as pointer size 8.
 - `SystemParametersInfoW(0x2029, 0, IntPtr(baseSize), ...)` does change
-  `CursorBaseSize` live and is the current candidate for reproducing the
-  Settings runtime apply behavior.
+  `CursorBaseSize` live.
+- `8 / 144` triggers the stable path and does not flicker.
+- `8 / 32` still flickers, so `CursorSize=8` alone is not enough. The next test
+  target is the minimum stable `CursorBaseSize`.
 
 ## Notes
 

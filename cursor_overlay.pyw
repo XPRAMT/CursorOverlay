@@ -158,11 +158,19 @@ class TrayController:
         self.baseline_size1_action = QAction("Apply size 1 baseline (1 / 32)")
         self.baseline_size1_action.triggered.connect(lambda: self.apply_cursor_candidate(1, 32))
 
+        self.gate_size7_action = QAction("Gate test (7 / 144)")
+        self.gate_size7_action.triggered.connect(lambda: self.apply_cursor_candidate(7, 144))
+
         self.stable_size8_action = QAction("Apply size 8 stable (8 / 144)")
         self.stable_size8_action.triggered.connect(lambda: self.apply_cursor_candidate(8, 144))
 
-        self.hybrid_8_32_action = QAction("Apply small stable candidate (8 / 32)")
-        self.hybrid_8_32_action.triggered.connect(lambda: self.apply_cursor_candidate(8, 32))
+        self.threshold_actions = []
+        for cursor_base_size in (32, 48, 64, 80, 96, 112, 128):
+            action = QAction(f"Threshold test (8 / {cursor_base_size})")
+            action.triggered.connect(
+                lambda checked=False, base_size=cursor_base_size: self.apply_cursor_candidate(8, base_size)
+            )
+            self.threshold_actions.append(action)
 
         self.startup_action = QAction("Start with Windows")
         self.startup_action.setCheckable(True)
@@ -175,8 +183,10 @@ class TrayController:
         self.menu.addAction(self.status_action)
         self.menu.addSeparator()
         self.menu.addAction(self.baseline_size1_action)
+        self.menu.addAction(self.gate_size7_action)
         self.menu.addAction(self.stable_size8_action)
-        self.menu.addAction(self.hybrid_8_32_action)
+        for action in self.threshold_actions:
+            self.menu.addAction(action)
         self.menu.addSeparator()
         self.menu.addAction(self.startup_action)
         self.menu.addSeparator()
