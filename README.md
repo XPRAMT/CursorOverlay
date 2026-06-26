@@ -7,9 +7,9 @@ forced away from the flickering normal cursor rendering path without changing
 the pointer size to 8.
 
 The app no longer creates any overlay window, does not draw a cursor, and does
-not hide or replace the system cursor. The currently tested public toggles did
-not reproduce the stable pointer-size-8 rendering path, so this version keeps a
-tray-only diagnostic shell while the real runtime trigger is investigated.
+not hide or replace the system cursor. It tests an undocumented cursor-base-size
+runtime apply call that appears to be closer to the path used when Windows
+Settings changes the pointer size.
 
 ## Background
 
@@ -18,12 +18,17 @@ and sometimes become semi-transparent. Pointer size 8 or higher stops the issue
 immediately, which strongly suggests Windows switches cursor rendering paths at
 that threshold.
 
-Pointer size 8 is not practical for normal use, so this app is used to test
-possible path switches without introducing a topmost overlay window.
+Pointer size 8 is not practical for normal use, so this app tests whether
+`CursorSize=8` can be kept while applying a smaller `CursorBaseSize` through the
+runtime cursor apply path.
 
 ## Features
 
 - Runs only in the system tray.
+- Can apply three cursor-path test presets:
+  - `1 / 32`: normal small pointer baseline.
+  - `8 / 144`: known stable large pointer path.
+  - `8 / 32`: small stable candidate.
 - Optional per-user startup launch through the Windows Run registry key.
 
 ## Requirements
@@ -49,16 +54,37 @@ menu.
 
 ## Tray Menu
 
+- `Apply size 1 baseline (1 / 32)`: writes `CursorSize=1` and applies
+  `CursorBaseSize=32`.
+- `Apply size 8 stable (8 / 144)`: writes `CursorSize=8` and applies
+  `CursorBaseSize=144`.
+- `Apply small stable candidate (8 / 32)`: writes `CursorSize=8` and applies
+  `CursorBaseSize=32`.
 - `Start with Windows`: toggles launch at user sign-in.
 - `Quit`: hides the tray icon and exits.
 
-## Tested and Excluded
+## Runtime Apply Path
+
+The app writes `CursorSize` normally, then calls:
+
+```text
+SystemParametersInfoW(0x2029, 0, IntPtr(CursorBaseSize), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
+```
+
+Local probing showed that `0x2029` with the base size passed as the `pvParam`
+integer value can update `CursorBaseSize` live. Passing a pointer to a `UINT` is
+wrong and can write the pointer address into the registry.
+
+## Tested Results
 
 - Directly writing arbitrary `CursorSize` and `CursorBaseSize` registry
   combinations did not change the live cursor.
 - `SPI_SETMOUSETRAILS(2)` does take effect at runtime and shows pointer trails,
   but it does not meaningfully reduce the flicker. It is not the same rendering
   path switch as pointer size 8.
+- `SystemParametersInfoW(0x2029, 0, IntPtr(baseSize), ...)` does change
+  `CursorBaseSize` live and is the current candidate for reproducing the
+  Settings runtime apply behavior.
 
 ## Notes
 

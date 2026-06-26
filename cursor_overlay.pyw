@@ -1,5 +1,7 @@
+import ctypes
 import sys
 import winreg
+from ctypes import wintypes
 from pathlib import Path
 
 from PySide6.QtCore import QSignalBlocker, QPoint, Qt
@@ -7,10 +9,28 @@ from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap, QPoly
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+SPI_PRIVATE_SET_CURSOR_BASE_SIZE = 0x2029
+SPIF_UPDATEINIFILE = 0x0001
+SPIF_SENDCHANGE = 0x0002
 STARTUP_APP_NAME = "CursorOverlay"
 RUN_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+ACCESSIBILITY_REGISTRY_PATH = r"Software\Microsoft\Accessibility"
+CURSORS_REGISTRY_PATH = r"Control Panel\Cursors"
 MOUSE_REGISTRY_PATH = r"Control Panel\Mouse"
+CURSOR_SIZE_VALUE = "CursorSize"
+CURSOR_BASE_SIZE_VALUE = "CursorBaseSize"
 MOUSE_TRAILS_VALUE = "MouseTrails"
+
+
+user32.SystemParametersInfoW.argtypes = [
+    wintypes.UINT,
+    wintypes.UINT,
+    wintypes.LPVOID,
+    wintypes.UINT,
+]
+user32.SystemParametersInfoW.restype = wintypes.BOOL
 
 
 def quote_windows_argument(value):
@@ -53,7 +73,29 @@ class StartupManager:
 
 class PointerRenderingManager:
     def status_text(self):
-        return f"MouseTrails={self.get_mouse_trails()}  No active workaround"
+        return (
+            f"CursorSize={self.cursor_size()}  "
+            f"CursorBaseSize={self.cursor_base_size()}  "
+            f"MouseTrails={self.get_mouse_trails()}"
+        )
+
+    def get_dword(self, path, name, default=0):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ) as key:
+                value, _ = winreg.QueryValueEx(key, name)
+        except FileNotFoundError:
+            return default
+        return int(value)
+
+    def set_dword(self, path, name, value):
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, int(value))
+
+    def cursor_size(self):
+        return self.get_dword(ACCESSIBILITY_REGISTRY_PATH, CURSOR_SIZE_VALUE, 1)
+
+    def cursor_base_size(self):
+        return self.get_dword(CURSORS_REGISTRY_PATH, CURSOR_BASE_SIZE_VALUE, 32)
 
     def get_mouse_trails(self):
         try:
@@ -62,6 +104,18 @@ class PointerRenderingManager:
         except FileNotFoundError:
             return "0"
         return str(value)
+
+    def apply_cursor_path_candidate(self, cursor_size, cursor_base_size):
+        self.set_dword(ACCESSIBILITY_REGISTRY_PATH, CURSOR_SIZE_VALUE, cursor_size)
+        ctypes.set_last_error(0)
+        if not user32.SystemParametersInfoW(
+            SPI_PRIVATE_SET_CURSOR_BASE_SIZE,
+            0,
+            ctypes.c_void_p(int(cursor_base_size)),
+            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
+        ):
+            error = ctypes.get_last_error()
+            raise OSError(error, f"SystemParametersInfoW(0x2029, {cursor_base_size}) failed")
 
 
 def create_tray_icon():
@@ -101,6 +155,15 @@ class TrayController:
         self.status_action = QAction(self.pointer_rendering_manager.status_text())
         self.status_action.setEnabled(False)
 
+        self.baseline_size1_action = QAction("Apply size 1 baseline (1 / 32)")
+        self.baseline_size1_action.triggered.connect(lambda: self.apply_cursor_candidate(1, 32))
+
+        self.stable_size8_action = QAction("Apply size 8 stable (8 / 144)")
+        self.stable_size8_action.triggered.connect(lambda: self.apply_cursor_candidate(8, 144))
+
+        self.hybrid_8_32_action = QAction("Apply small stable candidate (8 / 32)")
+        self.hybrid_8_32_action.triggered.connect(lambda: self.apply_cursor_candidate(8, 32))
+
         self.startup_action = QAction("Start with Windows")
         self.startup_action.setCheckable(True)
         self.startup_action.setChecked(self.startup_manager.is_enabled())
@@ -110,6 +173,10 @@ class TrayController:
         self.quit_action.triggered.connect(self.quit)
 
         self.menu.addAction(self.status_action)
+        self.menu.addSeparator()
+        self.menu.addAction(self.baseline_size1_action)
+        self.menu.addAction(self.stable_size8_action)
+        self.menu.addAction(self.hybrid_8_32_action)
         self.menu.addSeparator()
         self.menu.addAction(self.startup_action)
         self.menu.addSeparator()
@@ -127,6 +194,10 @@ class TrayController:
         blocker = QSignalBlocker(self.startup_action)
         self.startup_action.setChecked(self.startup_manager.is_enabled())
         del blocker
+
+    def apply_cursor_candidate(self, cursor_size, cursor_base_size):
+        self.pointer_rendering_manager.apply_cursor_path_candidate(cursor_size, cursor_base_size)
+        self.refresh_status()
 
     def refresh_status(self):
         self.status_action.setText(self.pointer_rendering_manager.status_text())
