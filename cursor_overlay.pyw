@@ -254,7 +254,7 @@ class OverlayWindow(QWidget):
         self.update()
 
     def apply_cursor_visibility(self):
-        if self.hide_original and self.draw_overlay and self.isVisible():
+        if self.hide_original:
             self.visibility_guard.hide()
         else:
             self.visibility_guard.show()

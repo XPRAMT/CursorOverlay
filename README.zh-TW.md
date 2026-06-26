@@ -44,7 +44,7 @@ python cursor_overlay.pyw
 ## System Tray 選單
 
 - `Draw overlay cursor`：啟用或停用自繪游標覆蓋層。
-- `Hide original cursor`：隱藏或恢復原始系統游標。若自繪游標已停用，原始游標會自動恢復。
+- `Hide original cursor`：隱藏或恢復原始系統游標。這個開關與自繪游標互相獨立，因此停用自繪游標並維持隱藏原始游標時，可以進入完全沒有游標的測試狀態。
 - `Start with Windows`：切換登入 Windows 後自動啟動。
 - `Quit`：停止覆蓋層、恢復系統游標、隱藏 tray icon，並結束程式。
 

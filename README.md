@@ -51,8 +51,9 @@ menu.
 ## Tray Menu
 
 - `Draw overlay cursor`: enables or disables the self-drawn cursor overlay.
-- `Hide original cursor`: hides or restores the original system cursor. If the
-  overlay cursor is disabled, the original cursor is restored automatically.
+- `Hide original cursor`: hides or restores the original system cursor. This is
+  independent from the overlay cursor, so disabling both can leave no visible
+  cursor for testing.
 - `Start with Windows`: toggles launch at user sign-in.
 - `Quit`: stops the overlay, restores the system cursor, hides the tray icon,
   and exits.
