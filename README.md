@@ -7,9 +7,9 @@ forced away from the flickering normal cursor rendering path without changing
 the pointer size to 8.
 
 The app no longer creates any overlay window, does not draw a cursor, and does
-not hide or replace the system cursor. It can toggle the shortest effective
-Windows pointer-trails runtime setting through `SPI_SETMOUSETRAILS(2)`, which
-may force Windows to use a different cursor composition path.
+not hide or replace the system cursor. The currently tested public toggles did
+not reproduce the stable pointer-size-8 rendering path, so this version keeps a
+tray-only diagnostic shell while the real runtime trigger is investigated.
 
 ## Background
 
@@ -18,17 +18,12 @@ and sometimes become semi-transparent. Pointer size 8 or higher stops the issue
 immediately, which strongly suggests Windows switches cursor rendering paths at
 that threshold.
 
-Pointer size 8 is not practical for normal use, so this app focuses on another
-possible path switch: the runtime pointer-trails API.
+Pointer size 8 is not practical for normal use, so this app is used to test
+possible path switches without introducing a topmost overlay window.
 
 ## Features
 
 - Runs only in the system tray.
-- Can call `SPI_SETMOUSETRAILS(2)` to enable the shortest effective pointer
-  trails setting.
-- Backs up the original `MouseTrails` value before changing it.
-- Restores the original value when the option is disabled.
-- Broadcasts `WM_SETTINGCHANGE` after changing the setting.
 - Optional per-user startup launch through the Windows Run registry key.
 
 ## Requirements
@@ -54,36 +49,20 @@ menu.
 
 ## Tray Menu
 
-- `Force software cursor path`: calls `SPI_SETMOUSETRAILS(2)`.
 - `Start with Windows`: toggles launch at user sign-in.
 - `Quit`: hides the tray icon and exits.
 
-## Registry Changes
+## Tested and Excluded
 
-When `Force software cursor path` is enabled, Windows receives:
-
-```text
-SPI_SETMOUSETRAILS(2)
-```
-
-The original `MouseTrails` value is stored here:
-
-```text
-HKCU\Software\CursorOverlay\OriginalMouseTrails
-```
-
-When the option is disabled, the original value is restored.
+- Directly writing arbitrary `CursorSize` and `CursorBaseSize` registry
+  combinations did not change the live cursor.
+- `SPI_SETMOUSETRAILS(2)` does take effect at runtime and shows pointer trails,
+  but it does not meaningfully reduce the flicker. It is not the same rendering
+  path switch as pointer size 8.
 
 ## Notes
 
-- This is an experimental workaround for a Windows cursor composition
-  regression. It may show a short pointer trail because value `1` is normalized
-  back to `0` by Windows, while `2` is the shortest effective runtime value.
-- Directly writing arbitrary `CursorSize` and `CursorBaseSize` registry
-  combinations did not change the live cursor, so those tray presets were
-  removed. The only confirmed live control in this version is
-  `SPI_SETMOUSETRAILS`.
+- This is an experimental diagnostic app for a Windows cursor composition
+  regression.
 - It does not create a topmost overlay window, so it should not block exclusive
   fullscreen games.
-- If the setting remains enabled after an unexpected exit, run the app again and
-  disable `Force software cursor path`.
