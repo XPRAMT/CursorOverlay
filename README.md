@@ -23,7 +23,8 @@ hides the original cursor.
 - Draws the cursor overlay at the original cursor position with `DrawIconEx`.
 - Runs without a main window; management is done from the system tray.
 - Can enable or disable the self-drawn overlay cursor from the tray menu.
-- Can hide or restore the original system cursor from the tray menu.
+- Can hide or restore the original system cursor by temporarily replacing
+  Windows system cursors with transparent cursors.
 - Temporarily restores the system cursor while the tray menu is open.
 - Optional per-user startup launch through the Windows Run registry key.
 
@@ -75,5 +76,6 @@ window. Disabling the option removes the registry value.
 - This utility is Windows-only because it depends on Win32 cursor APIs.
 - The overlay window is click-through and topmost, so it should not intercept
   normal mouse input.
-- If the app exits unexpectedly while the cursor is hidden, launching and
+- The app restores Windows system cursors when the tray menu opens and when the
+  app exits. If it exits unexpectedly while the cursor is hidden, launching and
   quitting it again should restore the system cursor.

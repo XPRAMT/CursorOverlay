@@ -20,6 +20,7 @@ gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
 CURSOR_SHOWING = 0x00000001
 DI_NORMAL = 0x0003
 HWND_TOPMOST = wintypes.HWND(-1)
+SPI_SETCURSORS = 0x0057
 SWP_NOSIZE = 0x0001
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
@@ -27,6 +28,24 @@ OVERLAY_SIZE = 256
 OVERLAY_PADDING = OVERLAY_SIZE // 2
 STARTUP_APP_NAME = "CursorOverlay"
 RUN_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+SYSTEM_CURSOR_IDS = (
+    32512,  # OCR_NORMAL
+    32513,  # OCR_IBEAM
+    32514,  # OCR_WAIT
+    32515,  # OCR_CROSS
+    32516,  # OCR_UP
+    32642,  # OCR_SIZENWSE
+    32643,  # OCR_SIZENESW
+    32644,  # OCR_SIZEWE
+    32645,  # OCR_SIZENS
+    32646,  # OCR_SIZEALL
+    32648,  # OCR_NO
+    32649,  # OCR_HAND
+    32650,  # OCR_APPSTARTING
+    32651,  # OCR_HELP
+    32671,  # OCR_PIN
+    32672,  # OCR_PERSON
+)
 
 
 class POINT(ctypes.Structure):
@@ -81,6 +100,25 @@ user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
 user32.ReleaseDC.restype = ctypes.c_int
 user32.ShowCursor.argtypes = [wintypes.BOOL]
 user32.ShowCursor.restype = ctypes.c_int
+user32.CreateCursor.argtypes = [
+    wintypes.HANDLE,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+]
+user32.CreateCursor.restype = wintypes.HANDLE
+user32.SetSystemCursor.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+user32.SetSystemCursor.restype = wintypes.BOOL
+user32.SystemParametersInfoW.argtypes = [
+    wintypes.UINT,
+    wintypes.UINT,
+    wintypes.LPVOID,
+    wintypes.UINT,
+]
+user32.SystemParametersInfoW.restype = wintypes.BOOL
 user32.GetSystemMetrics.argtypes = [ctypes.c_int]
 user32.GetSystemMetrics.restype = ctypes.c_int
 user32.SetWindowPos.argtypes = [
@@ -186,23 +224,43 @@ class CursorReader:
 class CursorVisibilityGuard:
     def __init__(self):
         self.enabled = False
-        self.hide_calls = 0
+        self.blank_and_mask = (ctypes.c_ubyte * 128)(*[0xFF] * 128)
+        self.blank_xor_mask = (ctypes.c_ubyte * 128)(*[0x00] * 128)
 
     def hide(self):
         if self.enabled:
             return
+        self.replace_system_cursors()
         self.enabled = True
-        self.hide_calls = 0
-        while user32.ShowCursor(False) >= 0 and self.hide_calls < 64:
-            self.hide_calls += 1
 
     def show(self):
         if not self.enabled:
             return
-        while user32.ShowCursor(True) < 0:
-            pass
+        self.restore_system_cursors()
         self.enabled = False
-        self.hide_calls = 0
+
+    def replace_system_cursors(self):
+        for cursor_id in SYSTEM_CURSOR_IDS:
+            blank_cursor = user32.CreateCursor(
+                None,
+                0,
+                0,
+                32,
+                32,
+                ctypes.byref(self.blank_and_mask),
+                ctypes.byref(self.blank_xor_mask),
+            )
+            if not blank_cursor:
+                self.restore_system_cursors()
+                raise_last_winerror("CreateCursor failed")
+            if not user32.SetSystemCursor(blank_cursor, cursor_id):
+                user32.DestroyIcon(blank_cursor)
+                self.restore_system_cursors()
+                raise_last_winerror("SetSystemCursor failed")
+
+    def restore_system_cursors(self):
+        if not user32.SystemParametersInfoW(SPI_SETCURSORS, 0, None, 0):
+            raise_last_winerror("SystemParametersInfo(SPI_SETCURSORS) failed")
 
 
 class OverlayWindow(QWidget):
