@@ -49,6 +49,25 @@ FALLBACK_CURSOR_ROLES = {
     "Wait": "wait_r.cur",
     "AppStarting": "busy_r.cur",
 }
+SCHEME_ROLE_ORDER = [
+    "Arrow",
+    "Help",
+    "AppStarting",
+    "Wait",
+    "Crosshair",
+    "IBeam",
+    "NWPen",
+    "No",
+    "SizeNS",
+    "SizeWE",
+    "SizeNWSE",
+    "SizeNESW",
+    "SizeAll",
+    "UpArrow",
+    "Hand",
+    "Pin",
+    "Person",
+]
 
 
 user32.SystemParametersInfoW.argtypes = [
@@ -203,7 +222,7 @@ class PointerRenderingManager:
     def read_smallest_cursor_frame(self, source):
         data = source.read_bytes()
         if data[:4] == b"RIFF":
-            raise ValueError(f"Animated cursor is not supported: {source}")
+            data = self.extract_first_ani_cursor(data, source)
 
         reserved = int.from_bytes(data[0:2], "little")
         cursor_type = int.from_bytes(data[2:4], "little")
@@ -221,7 +240,10 @@ class PointerRenderingManager:
             entries.append((width, height, hot_x, hot_y, index))
 
         width, height, hot_x, hot_y, index = min(entries, key=lambda item: item[0] * item[1])
-        reader = QImageReader(str(source))
+        byte_array = QByteArray(data)
+        buffer = QBuffer(byte_array)
+        buffer.open(QIODevice.ReadOnly)
+        reader = QImageReader(buffer, b"cur")
         if not reader.jumpToImage(index):
             raise ValueError(f"Cannot select cursor frame {index}: {source}")
         image = reader.read()
@@ -237,6 +259,22 @@ class PointerRenderingManager:
             hot_x = round(hot_x * image.width() / width)
             hot_y = round(hot_y * image.height() / height)
         return image.convertToFormat(QImage.Format_ARGB32), hot_x, hot_y
+
+    def extract_first_ani_cursor(self, data, source):
+        offset = 12 if data[:4] == b"RIFF" else 0
+        while offset + 8 <= len(data):
+            chunk_id = data[offset : offset + 4]
+            chunk_size = int.from_bytes(data[offset + 4 : offset + 8], "little")
+            chunk_start = offset + 8
+            chunk_end = chunk_start + chunk_size
+            if chunk_id == b"icon":
+                return data[chunk_start:chunk_end]
+            if chunk_id in (b"RIFF", b"LIST"):
+                nested = self.extract_first_ani_cursor(data[chunk_start + 4 : chunk_end], source)
+                if nested:
+                    return nested
+            offset = chunk_end + (chunk_size & 1)
+        raise ValueError(f"Animated cursor has no icon frame: {source}")
 
     def image_to_png_bytes(self, image):
         byte_array = QByteArray()
@@ -256,17 +294,56 @@ class PointerRenderingManager:
         entry += (22).to_bytes(4, "little")
         return header + entry + png_data
 
-    def backup_current_cursor_scheme(self):
+    def current_cursor_values(self):
+        values = {"": self.get_registry_string(CURSORS_REGISTRY_PATH, "", "")}
+        for role in FALLBACK_CURSOR_ROLES:
+            values[role] = self.get_registry_string(CURSORS_REGISTRY_PATH, role, "")
+        return values
+
+    def save_original_cursor_values(self, values):
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_ALL_ACCESS) as key:
-            try:
-                winreg.QueryValueEx(key, ORIGINAL_CURSORS_VALUE)
-                return
-            except FileNotFoundError:
-                pass
-            values = {"": self.get_registry_string(CURSORS_REGISTRY_PATH, "", "")}
-            for role in FALLBACK_CURSOR_ROLES:
-                values[role] = self.get_registry_string(CURSORS_REGISTRY_PATH, role, "")
             winreg.SetValueEx(key, ORIGINAL_CURSORS_VALUE, 0, winreg.REG_SZ, json.dumps(values))
+
+    def is_current_padded_scheme(self):
+        scheme_name = self.get_registry_string(CURSORS_REGISTRY_PATH, "", "")
+        arrow = self.get_registry_string(CURSORS_REGISTRY_PATH, "Arrow", "")
+        return scheme_name == PADDED_SCHEME_NAME or "generated_cursors" in arrow
+
+    def saved_cursor_schemes(self):
+        schemes = {}
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CURSORS_REGISTRY_PATH + r"\Schemes", 0, winreg.KEY_READ) as key:
+                index = 0
+                while True:
+                    try:
+                        name, value, _ = winreg.EnumValue(key, index)
+                    except OSError:
+                        break
+                    values = [item.strip() for item in str(value).split(",")]
+                    scheme = {"": name}
+                    for role, cursor_value in zip(SCHEME_ROLE_ORDER, values):
+                        scheme[role] = cursor_value
+                    schemes[name] = scheme
+                    index += 1
+        except FileNotFoundError:
+            pass
+        return schemes
+
+    def set_source_cursor_scheme(self, name):
+        schemes = self.saved_cursor_schemes()
+        if name not in schemes:
+            raise KeyError(f"Cursor scheme not found: {name}")
+        self.save_original_cursor_values(schemes[name])
+
+    def backup_current_cursor_scheme(self, force=False):
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_ALL_ACCESS) as key:
+            if not force:
+                try:
+                    winreg.QueryValueEx(key, ORIGINAL_CURSORS_VALUE)
+                    return
+                except FileNotFoundError:
+                    pass
+            winreg.SetValueEx(key, ORIGINAL_CURSORS_VALUE, 0, winreg.REG_SZ, json.dumps(self.current_cursor_values()))
 
     def original_or_current_cursor_values(self):
         try:
@@ -274,19 +351,20 @@ class PointerRenderingManager:
                 raw_values, _ = winreg.QueryValueEx(key, ORIGINAL_CURSORS_VALUE)
             return json.loads(raw_values)
         except (FileNotFoundError, json.JSONDecodeError, OSError):
-            values = {"": self.get_registry_string(CURSORS_REGISTRY_PATH, "", "")}
-            for role in FALLBACK_CURSOR_ROLES:
-                values[role] = self.get_registry_string(CURSORS_REGISTRY_PATH, role, "")
-            return values
+            return self.current_cursor_values()
 
     def apply_padded_cursor_scheme(self):
-        self.backup_current_cursor_scheme()
+        self.backup_current_cursor_scheme(force=not self.is_current_padded_scheme())
         self.ensure_padded_cursor_scheme()
         self.set_registry_string(CURSORS_REGISTRY_PATH, "", PADDED_SCHEME_NAME)
         for role in FALLBACK_CURSOR_ROLES:
             self.set_registry_string(CURSORS_REGISTRY_PATH, role, str(self.padded_cursor_path(role)))
         self.reload_cursors()
         self.apply_stable_cursor_base_size()
+
+    def apply_padded_cursor_scheme_from_saved_scheme(self, name):
+        self.set_source_cursor_scheme(name)
+        self.apply_padded_cursor_scheme()
 
     def restore_original_cursor_scheme(self):
         try:
@@ -350,6 +428,19 @@ class TrayController:
         self.padded_scheme_action = QAction("Apply padded small cursor scheme")
         self.padded_scheme_action.triggered.connect(self.apply_padded_cursor_scheme)
 
+        self.saved_schemes_menu = QMenu("Use saved cursor scheme")
+        self.saved_scheme_actions = []
+        for scheme_name in sorted(self.pointer_rendering_manager.saved_cursor_schemes()):
+            action = self.saved_schemes_menu.addAction(scheme_name)
+            action.triggered.connect(
+                lambda checked=False, name=scheme_name: self.apply_padded_cursor_scheme_from_saved_scheme(name)
+            )
+            self.saved_scheme_actions.append(action)
+        if self.saved_schemes_menu.isEmpty():
+            empty_action = self.saved_schemes_menu.addAction("No saved schemes")
+            empty_action.setEnabled(False)
+            self.saved_scheme_actions.append(empty_action)
+
         self.restore_scheme_action = QAction("Restore original cursor scheme")
         self.restore_scheme_action.triggered.connect(self.restore_original_cursor_scheme)
 
@@ -373,6 +464,7 @@ class TrayController:
         self.menu.addAction(self.status_action)
         self.menu.addSeparator()
         self.menu.addAction(self.padded_scheme_action)
+        self.menu.addMenu(self.saved_schemes_menu)
         self.menu.addAction(self.restore_scheme_action)
         self.menu.addSeparator()
         self.menu.addAction(self.stable_base_action)
@@ -406,6 +498,10 @@ class TrayController:
 
     def apply_padded_cursor_scheme(self):
         self.pointer_rendering_manager.apply_padded_cursor_scheme()
+        self.refresh_status()
+
+    def apply_padded_cursor_scheme_from_saved_scheme(self, name):
+        self.pointer_rendering_manager.apply_padded_cursor_scheme_from_saved_scheme(name)
         self.refresh_status()
 
     def restore_original_cursor_scheme(self):

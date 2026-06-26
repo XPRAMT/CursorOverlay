@@ -24,6 +24,7 @@ Cursor Overlay 是一個 Windows 系統匣工具，用來測試是否能強制 W
   - `128`：低於門檻的對照值。
   - `32`：一般小 base size 對照值。
 - 可恢復套用 padded scheme 前的原始 cursor scheme。
+- 可從 Windows 已儲存的 cursor scheme 重新產生 padded scheme。
 - 可選擇透過 Windows Run registry key 設定目前使用者的開機自啟。
 
 ## 需求
@@ -49,6 +50,7 @@ python cursor_overlay.pyw
 ## System Tray 選單
 
 - `Apply padded small cursor scheme`：產生 144 px cursor 檔案，內部放 32 px 小圖形，並套用為目前 cursor scheme。
+- `Use saved cursor scheme`：選擇 Windows 已儲存的 cursor scheme 作為重新產生 padded cursor 的圖案來源。
 - `Restore original cursor scheme`：恢復第一次套用 padded scheme 前備份的 cursor scheme。
 - `Apply stable base size (144)`：在不改變 `CursorSize` 的情況下套用穩定的 `CursorBaseSize=144` 路徑。
 - `Test below threshold (128)`：套用 `CursorBaseSize=128`。
@@ -73,7 +75,7 @@ SystemParametersInfoW(0x2029, 0, IntPtr(CursorBaseSize), SPIF_UPDATEINIFILE | SP
 app 會先備份目前正在使用的 cursor scheme，然後從每個原始 cursor 檔案讀取最小 frame。接著把這個圖形放到 144 px 透明畫布左上角，保留原本 hotspot，並把產生的 `.cur` 寫到 `generated_cursors/`。
 
 如果某個 cursor role 原本是空值或指向不存在的檔案，才會 fallback 到 `C:\Windows\Cursors` 底下對應的 Windows 預設 cursor。
-如果原本是 `.ani` 動畫 cursor，該 role 也會改用靜態 fallback cursor 產生。
+如果原本是 `.ani` 動畫 cursor，會抽取其中第一個 cursor frame 轉成靜態 padded cursor。
 
 這些檔案是 runtime output，已刻意加入 `.gitignore`，不會提交到 Git。
 

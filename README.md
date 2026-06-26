@@ -36,6 +36,7 @@ gate. The flicker stops only when `CursorBaseSize` is at least `144`.
   - `32`: normal small-base comparison.
 - Can restore the cursor scheme that was active before applying the padded
   scheme.
+- Can regenerate the padded scheme from a saved Windows cursor scheme.
 - Optional per-user startup launch through the Windows Run registry key.
 
 ## Requirements
@@ -64,6 +65,8 @@ stable `CursorBaseSize=144` path.
 
 - `Apply padded small cursor scheme`: generates 144 px cursor files with a
   small 32 px glyph and applies them as the active cursor scheme.
+- `Use saved cursor scheme`: selects a saved Windows cursor scheme as the image
+  source for regenerated padded cursors.
 - `Restore original cursor scheme`: restores the cursor scheme backed up before
   the padded scheme was first applied.
 - `Apply stable base size (144)`: applies the stable `CursorBaseSize=144`
@@ -97,8 +100,8 @@ files under `generated_cursors/`.
 
 If a cursor role was empty or points to a missing file, the app falls back to the
 matching default cursor under `C:\Windows\Cursors`.
-Animated `.ani` cursors are also converted through a static fallback cursor for
-that role.
+Animated `.ani` cursors are converted by extracting their first embedded cursor
+frame.
 
 Those generated files are runtime output and are intentionally ignored by Git.
 
