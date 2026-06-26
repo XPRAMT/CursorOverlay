@@ -14,4 +14,5 @@ dist/
 .pytest_cache/
 .ruff_cache/
 *.log
+active_cursor_probe_sample.log
 *.tmp
