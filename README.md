@@ -2,30 +2,31 @@
 
 English | [繁體中文](README.zh-TW.md)
 
-Cursor Overlay is a small Windows tray utility created to reduce cursor
-flickering on affected Windows 11 builds. It keeps a transparent,
-click-through, topmost overlay window following the system cursor. The app does
-not draw its own cursor and does not hide or replace the Windows cursor.
+Cursor Overlay is a Windows tray utility for testing whether Windows can be
+forced away from the flickering normal cursor rendering path without changing
+the pointer size to 8.
 
-It is written in Python with PySide6 and uses Win32 APIs for cursor position,
-topmost positioning, and per-user startup registration.
+The app no longer creates any overlay window, does not draw a cursor, and does
+not hide or replace the system cursor. It only toggles the hidden pointer-trails
+setting that may force Windows to use a different cursor composition path.
 
 ## Background
 
-This app was created to work around a cursor flickering issue on Windows 11
-build 26300. The effective mitigation observed so far is keeping a transparent
-topmost overlay around the live cursor position, which can change the desktop
-composition path around the cursor without replacing the visible Windows cursor.
+On Windows 11 Insider Experimental build 26300.x, pointer sizes 1-7 can flicker
+and sometimes become semi-transparent. Pointer size 8 or higher stops the issue
+immediately, which strongly suggests Windows switches cursor rendering paths at
+that threshold.
+
+Pointer size 8 is not practical for normal use, so this app focuses on another
+possible path switch: `MouseTrails=-1`.
 
 ## Features
 
-- Reads the live cursor position with `GetCursorInfo`.
-- Keeps a transparent topmost overlay window following the cursor position.
-- Can try forcing the normal-size cursor onto a different rendering path by
-  enabling the hidden pointer-trails setting (`MouseTrails=-1`).
-- Does not draw a custom cursor.
-- Does not hide or replace the system cursor.
-- Runs without a main window; management is done from the system tray.
+- Runs only in the system tray.
+- Can set `HKCU\Control Panel\Mouse\MouseTrails` to `-1`.
+- Backs up the original `MouseTrails` value before changing it.
+- Restores the original value when the option is disabled.
+- Broadcasts `WM_SETTINGCHANGE` after changing the setting.
 - Optional per-user startup launch through the Windows Run registry key.
 
 ## Requirements
@@ -52,28 +53,31 @@ menu.
 ## Tray Menu
 
 - `Force software cursor path`: sets `MouseTrails=-1` and broadcasts the mouse
-  setting change. This is intended to test whether size-1 cursors can avoid the
-  flickering path without using pointer size 8.
+  setting change.
 - `Start with Windows`: toggles launch at user sign-in.
-- `Quit`: stops the overlay, hides the tray icon, and exits.
+- `Quit`: hides the tray icon and exits.
 
-## Startup Behavior
+## Registry Changes
 
-When `Start with Windows` is enabled, the app writes this per-user registry
-value:
+When `Force software cursor path` is enabled:
 
 ```text
-HKCU\Software\Microsoft\Windows\CurrentVersion\Run\CursorOverlay
+HKCU\Control Panel\Mouse\MouseTrails = -1
 ```
 
-The command uses `pythonw.exe` when available so startup does not open a console
-window. Disabling the option removes the registry value.
+The original value is stored here:
+
+```text
+HKCU\Software\CursorOverlay\OriginalMouseTrails
+```
+
+When the option is disabled, the original value is restored.
 
 ## Notes
 
-- This utility is Windows-only because it depends on Win32 cursor APIs.
-- The overlay window is transparent, click-through, and topmost, so it should
-  not intercept normal mouse input.
-- `Force software cursor path` changes `HKCU\Control Panel\Mouse\MouseTrails`.
-  The app stores the original value under `HKCU\Software\CursorOverlay` and
-  restores it when the option is disabled.
+- This is an experimental workaround for a Windows cursor composition
+  regression.
+- It does not create a topmost overlay window, so it should not block exclusive
+  fullscreen games.
+- If the setting remains enabled after an unexpected exit, run the app again and
+  disable `Force software cursor path`.
