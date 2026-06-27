@@ -59,7 +59,8 @@ stable `CursorBaseSize=144` path.
 ## Tray Menu
 
 - `Use saved cursor scheme`: selects a saved Windows cursor scheme as the image
-  source for regenerated padded cursors.
+  source for regenerated padded cursors, or restores the Windows system default
+  cursor source.
 - `Glyph size`: regenerates the padded cursor scheme at a different visible
   glyph size. Larger values preserve more detail but look larger.
 - `Start with Windows`: toggles launch at user sign-in.

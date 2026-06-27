@@ -396,6 +396,15 @@ class PointerRenderingManager:
             pass
         return schemes
 
+    def default_cursor_scheme_values(self):
+        values = {"": ""}
+        for role in FALLBACK_CURSOR_ROLES:
+            values[role] = str(self.fallback_cursor_source_path(role))
+        return values
+
+    def set_source_default_cursor_scheme(self):
+        self.save_original_cursor_values(self.default_cursor_scheme_values())
+
     def set_source_cursor_scheme(self, name):
         schemes = self.saved_cursor_schemes()
         if name not in schemes:
@@ -431,6 +440,10 @@ class PointerRenderingManager:
 
     def apply_padded_cursor_scheme_from_saved_scheme(self, name):
         self.set_source_cursor_scheme(name)
+        self.apply_padded_cursor_scheme()
+
+    def apply_padded_cursor_scheme_from_default_scheme(self):
+        self.set_source_default_cursor_scheme()
         self.apply_padded_cursor_scheme()
 
     def apply_padded_cursor_scheme_with_glyph_size(self, glyph_size):
@@ -502,13 +515,17 @@ class TrayController:
 
         self.saved_schemes_menu = QMenu("Use saved cursor scheme")
         self.saved_scheme_actions = []
+        default_action = self.saved_schemes_menu.addAction("Restore system default")
+        default_action.triggered.connect(self.apply_padded_cursor_scheme_from_default_scheme)
+        self.saved_scheme_actions.append(default_action)
+        self.saved_schemes_menu.addSeparator()
         for scheme_name in sorted(self.pointer_rendering_manager.saved_cursor_schemes()):
             action = self.saved_schemes_menu.addAction(scheme_name)
             action.triggered.connect(
                 lambda checked=False, name=scheme_name: self.apply_padded_cursor_scheme_from_saved_scheme(name)
             )
             self.saved_scheme_actions.append(action)
-        if self.saved_schemes_menu.isEmpty():
+        if len(self.saved_scheme_actions) == 1:
             empty_action = self.saved_schemes_menu.addAction("No saved schemes")
             empty_action.setEnabled(False)
             self.saved_scheme_actions.append(empty_action)
@@ -557,6 +574,10 @@ class TrayController:
 
     def apply_padded_cursor_scheme_from_saved_scheme(self, name):
         self.pointer_rendering_manager.apply_padded_cursor_scheme_from_saved_scheme(name)
+        self.refresh_status()
+
+    def apply_padded_cursor_scheme_from_default_scheme(self):
+        self.pointer_rendering_manager.apply_padded_cursor_scheme_from_default_scheme()
         self.refresh_status()
 
     def apply_padded_cursor_scheme_with_glyph_size(self, glyph_size):

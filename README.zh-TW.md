@@ -44,7 +44,7 @@ python cursor_overlay.pyw
 
 ## System Tray 選單
 
-- `Use saved cursor scheme`：選擇 Windows 已儲存的 cursor scheme 作為重新產生 padded cursor 的圖案來源。
+- `Use saved cursor scheme`：選擇 Windows 已儲存的 cursor scheme 作為重新產生 padded cursor 的圖案來源，或恢復使用 Windows 系統預設游標來源。
 - `Glyph size`：用不同可視圖形大小重新產生 padded cursor scheme。數值越大細節越多，但看起來也越大。
 - `Start with Windows`：切換登入 Windows 後自動啟動。
 - `Quit`：恢復原始 cursor scheme、還原 `CursorBaseSize=32`、隱藏 tray icon，並結束程式。
