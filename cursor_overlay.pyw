@@ -18,7 +18,7 @@ SPIF_UPDATEINIFILE = 0x0001
 SPIF_SENDCHANGE = 0x0002
 STABLE_CURSOR_BASE_SIZE = 144
 DEFAULT_CURSOR_BASE_SIZE = 32
-CUSTOM_CURSOR_POLL_MS = 100
+CUSTOM_CURSOR_FALLBACK_POLL_MS = 1000
 PADDED_CURSOR_CANVAS_SIZE = 144
 DEFAULT_PADDED_CURSOR_GLYPH_SIZE = 48
 STARTUP_APP_NAME = "CursorOverlay"
@@ -72,6 +72,9 @@ SCHEME_ROLE_ORDER = [
     "Person",
 ]
 CURSOR_SHOWING = 0x00000001
+EVENT_OBJECT_LOCATIONCHANGE = 0x800B
+OBJID_CURSOR = -9
+WINEVENT_OUTOFCONTEXT = 0x0000
 SYSTEM_CURSOR_IDS = [
     32512,  # OCR_NORMAL
     32513,  # OCR_IBEAM
@@ -105,6 +108,18 @@ class CURSORINFO(ctypes.Structure):
     ]
 
 
+WINEVENTPROC = ctypes.WINFUNCTYPE(
+    None,
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    wintypes.HWND,
+    wintypes.LONG,
+    wintypes.LONG,
+    wintypes.DWORD,
+    wintypes.DWORD,
+)
+
+
 user32.SystemParametersInfoW.argtypes = [
     wintypes.UINT,
     wintypes.UINT,
@@ -116,6 +131,18 @@ user32.GetCursorInfo.argtypes = [ctypes.POINTER(CURSORINFO)]
 user32.GetCursorInfo.restype = wintypes.BOOL
 user32.LoadCursorW.argtypes = [wintypes.HINSTANCE, wintypes.LPVOID]
 user32.LoadCursorW.restype = wintypes.HANDLE
+user32.SetWinEventHook.argtypes = [
+    wintypes.DWORD,
+    wintypes.DWORD,
+    wintypes.HMODULE,
+    WINEVENTPROC,
+    wintypes.DWORD,
+    wintypes.DWORD,
+    wintypes.DWORD,
+]
+user32.SetWinEventHook.restype = wintypes.HANDLE
+user32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
+user32.UnhookWinEvent.restype = wintypes.BOOL
 
 
 def quote_windows_argument(value):
@@ -597,6 +624,9 @@ class TrayController:
         self.tray = tray
         self.startup_manager = startup_manager
         self.pointer_rendering_manager = pointer_rendering_manager
+        self.cursor_event_hook = None
+        self.cursor_event_callback = None
+        self.cursor_check_pending = False
 
         self.menu = QMenu()
         self.status_action = QAction(self.pointer_rendering_manager.status_text())
@@ -652,9 +682,39 @@ class TrayController:
         self.tray.activated.connect(self.handle_activation)
 
         self.cursor_guard_timer = QTimer(self.app)
-        self.cursor_guard_timer.setInterval(CUSTOM_CURSOR_POLL_MS)
+        self.cursor_guard_timer.setInterval(CUSTOM_CURSOR_FALLBACK_POLL_MS)
         self.cursor_guard_timer.timeout.connect(self.sync_cursor_base_size_for_active_cursor)
         self.cursor_guard_timer.start()
+        self.start_cursor_event_monitor()
+        self.app.aboutToQuit.connect(self.stop_cursor_event_monitor)
+
+    def start_cursor_event_monitor(self):
+        self.cursor_event_callback = WINEVENTPROC(self.handle_cursor_win_event)
+        self.cursor_event_hook = user32.SetWinEventHook(
+            EVENT_OBJECT_LOCATIONCHANGE,
+            EVENT_OBJECT_LOCATIONCHANGE,
+            None,
+            self.cursor_event_callback,
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        )
+
+    def stop_cursor_event_monitor(self):
+        if self.cursor_event_hook:
+            user32.UnhookWinEvent(self.cursor_event_hook)
+            self.cursor_event_hook = None
+        self.cursor_event_callback = None
+
+    def handle_cursor_win_event(self, hook, event, hwnd, object_id, child_id, event_thread, event_time):
+        if object_id != OBJID_CURSOR or self.cursor_check_pending:
+            return
+        self.cursor_check_pending = True
+        QTimer.singleShot(0, self.run_deferred_cursor_check)
+
+    def run_deferred_cursor_check(self):
+        self.cursor_check_pending = False
+        self.sync_cursor_base_size_for_active_cursor()
 
     def handle_activation(self, reason):
         if reason == QSystemTrayIcon.Trigger:
