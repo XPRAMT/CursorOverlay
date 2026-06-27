@@ -5,12 +5,13 @@ import winreg
 from ctypes import wintypes
 from pathlib import Path
 
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSignalBlocker, QTimer, QPoint, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, QSignalBlocker, QTimer, Signal, QPoint, Qt
 from PySide6.QtGui import QAction, QColor, QIcon, QImage, QImageReader, QPainter, QPen, QPixmap, QPolygon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 SPI_PRIVATE_SET_CURSOR_BASE_SIZE = 0x2029
 SPI_SETCURSORS = 0x0057
@@ -75,6 +76,8 @@ CURSOR_SHOWING = 0x00000001
 EVENT_OBJECT_LOCATIONCHANGE = 0x800B
 OBJID_CURSOR = -9
 WINEVENT_OUTOFCONTEXT = 0x0000
+WH_MOUSE_LL = 14
+WM_MOUSEMOVE = 0x0200
 SYSTEM_CURSOR_IDS = [
     32512,  # OCR_NORMAL
     32513,  # OCR_IBEAM
@@ -118,6 +121,12 @@ WINEVENTPROC = ctypes.WINFUNCTYPE(
     wintypes.DWORD,
     wintypes.DWORD,
 )
+LOWLEVELMOUSEPROC = ctypes.WINFUNCTYPE(
+    wintypes.LPARAM,
+    ctypes.c_int,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+)
 
 
 user32.SystemParametersInfoW.argtypes = [
@@ -143,6 +152,28 @@ user32.SetWinEventHook.argtypes = [
 user32.SetWinEventHook.restype = wintypes.HANDLE
 user32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
 user32.UnhookWinEvent.restype = wintypes.BOOL
+user32.SetWindowsHookExW.argtypes = [
+    ctypes.c_int,
+    LOWLEVELMOUSEPROC,
+    wintypes.HINSTANCE,
+    wintypes.DWORD,
+]
+user32.SetWindowsHookExW.restype = wintypes.HANDLE
+user32.CallNextHookEx.argtypes = [
+    wintypes.HANDLE,
+    ctypes.c_int,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+]
+user32.CallNextHookEx.restype = wintypes.LPARAM
+user32.UnhookWindowsHookEx.argtypes = [wintypes.HANDLE]
+user32.UnhookWindowsHookEx.restype = wintypes.BOOL
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+
+class CursorCheckDispatcher(QObject):
+    requested = Signal()
 
 
 def quote_windows_argument(value):
@@ -626,7 +657,11 @@ class TrayController:
         self.pointer_rendering_manager = pointer_rendering_manager
         self.cursor_event_hook = None
         self.cursor_event_callback = None
+        self.mouse_hook = None
+        self.mouse_hook_callback = None
         self.cursor_check_pending = False
+        self.cursor_check_dispatcher = CursorCheckDispatcher(self.app)
+        self.cursor_check_dispatcher.requested.connect(self.run_deferred_cursor_check, Qt.QueuedConnection)
 
         self.menu = QMenu()
         self.status_action = QAction(self.pointer_rendering_manager.status_text())
@@ -686,7 +721,9 @@ class TrayController:
         self.cursor_guard_timer.timeout.connect(self.sync_cursor_base_size_for_active_cursor)
         self.cursor_guard_timer.start()
         self.start_cursor_event_monitor()
+        self.start_mouse_event_monitor()
         self.app.aboutToQuit.connect(self.stop_cursor_event_monitor)
+        self.app.aboutToQuit.connect(self.stop_mouse_event_monitor)
 
     def start_cursor_event_monitor(self):
         self.cursor_event_callback = WINEVENTPROC(self.handle_cursor_win_event)
@@ -706,11 +743,36 @@ class TrayController:
             self.cursor_event_hook = None
         self.cursor_event_callback = None
 
+    def start_mouse_event_monitor(self):
+        self.mouse_hook_callback = LOWLEVELMOUSEPROC(self.handle_mouse_hook_event)
+        self.mouse_hook = user32.SetWindowsHookExW(
+            WH_MOUSE_LL,
+            self.mouse_hook_callback,
+            kernel32.GetModuleHandleW(None),
+            0,
+        )
+
+    def stop_mouse_event_monitor(self):
+        if self.mouse_hook:
+            user32.UnhookWindowsHookEx(self.mouse_hook)
+            self.mouse_hook = None
+        self.mouse_hook_callback = None
+
     def handle_cursor_win_event(self, hook, event, hwnd, object_id, child_id, event_thread, event_time):
         if object_id != OBJID_CURSOR or self.cursor_check_pending:
             return
+        self.request_cursor_check()
+
+    def handle_mouse_hook_event(self, code, wparam, lparam):
+        if code >= 0 and wparam == WM_MOUSEMOVE:
+            self.request_cursor_check()
+        return user32.CallNextHookEx(self.mouse_hook, code, wparam, lparam)
+
+    def request_cursor_check(self):
+        if self.cursor_check_pending:
+            return
         self.cursor_check_pending = True
-        QTimer.singleShot(0, self.run_deferred_cursor_check)
+        self.cursor_check_dispatcher.requested.emit()
 
     def run_deferred_cursor_check(self):
         self.cursor_check_pending = False
