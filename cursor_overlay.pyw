@@ -242,7 +242,12 @@ class PointerRenderingManager:
         painter.end()
 
         png_data = self.image_to_png_bytes(canvas)
-        return self.build_cursor_file(png_data, PADDED_CURSOR_CANVAS_SIZE, hot_x, hot_y)
+        return self.build_cursor_file(
+            png_data,
+            self.padded_glyph_size(),
+            hot_x,
+            hot_y,
+        )
 
     def read_best_cursor_frame(self, data, source, target_size):
         reserved = int.from_bytes(data[0:2], "little")
@@ -351,8 +356,8 @@ class PointerRenderingManager:
         buffer.close()
         return bytes(byte_array)
 
-    def build_cursor_file(self, png_data, size, hot_x, hot_y):
-        width_byte = 0 if size >= 256 else size
+    def build_cursor_file(self, png_data, nominal_size, hot_x, hot_y):
+        width_byte = 0 if nominal_size >= 256 else nominal_size
         header = (0).to_bytes(2, "little") + (2).to_bytes(2, "little") + (1).to_bytes(2, "little")
         entry = bytes([width_byte, width_byte, 0, 0])
         entry += int(hot_x).to_bytes(2, "little")
