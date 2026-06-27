@@ -19,7 +19,6 @@ SPIF_UPDATEINIFILE = 0x0001
 SPIF_SENDCHANGE = 0x0002
 STABLE_CURSOR_BASE_SIZE = 144
 DEFAULT_CURSOR_BASE_SIZE = 32
-CUSTOM_CURSOR_FALLBACK_POLL_MS = 1000
 PADDED_CURSOR_CANVAS_SIZE = 144
 DEFAULT_PADDED_CURSOR_GLYPH_SIZE = 48
 STARTUP_APP_NAME = "CursorOverlay"
@@ -718,10 +717,6 @@ class TrayController:
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self.handle_activation)
 
-        self.cursor_guard_timer = QTimer(self.app)
-        self.cursor_guard_timer.setInterval(CUSTOM_CURSOR_FALLBACK_POLL_MS)
-        self.cursor_guard_timer.timeout.connect(self.sync_cursor_base_size_for_active_cursor)
-        self.cursor_guard_timer.start()
         self.start_cursor_event_monitor()
         self.start_mouse_event_monitor()
         self.app.aboutToQuit.connect(self.stop_cursor_event_monitor)
