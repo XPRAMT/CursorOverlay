@@ -5,7 +5,7 @@ import winreg
 from ctypes import wintypes
 from pathlib import Path
 
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSignalBlocker, QPoint, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSignalBlocker, QTimer, QPoint, Qt
 from PySide6.QtGui import QAction, QColor, QIcon, QImage, QImageReader, QPainter, QPen, QPixmap, QPolygon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -18,6 +18,7 @@ SPIF_UPDATEINIFILE = 0x0001
 SPIF_SENDCHANGE = 0x0002
 STABLE_CURSOR_BASE_SIZE = 144
 DEFAULT_CURSOR_BASE_SIZE = 32
+CUSTOM_CURSOR_POLL_MS = 100
 PADDED_CURSOR_CANVAS_SIZE = 144
 DEFAULT_PADDED_CURSOR_GLYPH_SIZE = 48
 STARTUP_APP_NAME = "CursorOverlay"
@@ -70,6 +71,38 @@ SCHEME_ROLE_ORDER = [
     "Pin",
     "Person",
 ]
+CURSOR_SHOWING = 0x00000001
+SYSTEM_CURSOR_IDS = [
+    32512,  # OCR_NORMAL
+    32513,  # OCR_IBEAM
+    32514,  # OCR_WAIT
+    32515,  # OCR_CROSS
+    32516,  # OCR_UP
+    32642,  # OCR_SIZENWSE
+    32643,  # OCR_SIZENESW
+    32644,  # OCR_SIZEWE
+    32645,  # OCR_SIZENS
+    32646,  # OCR_SIZEALL
+    32648,  # OCR_NO
+    32649,  # OCR_HAND
+    32650,  # OCR_APPSTARTING
+    32651,  # OCR_HELP
+    32671,  # OCR_PIN
+    32672,  # OCR_PERSON
+]
+
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+
+class CURSORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hCursor", wintypes.HANDLE),
+        ("ptScreenPos", POINT),
+    ]
 
 
 user32.SystemParametersInfoW.argtypes = [
@@ -79,6 +112,10 @@ user32.SystemParametersInfoW.argtypes = [
     wintypes.UINT,
 ]
 user32.SystemParametersInfoW.restype = wintypes.BOOL
+user32.GetCursorInfo.argtypes = [ctypes.POINTER(CURSORINFO)]
+user32.GetCursorInfo.restype = wintypes.BOOL
+user32.LoadCursorW.argtypes = [wintypes.HINSTANCE, wintypes.LPVOID]
+user32.LoadCursorW.restype = wintypes.HANDLE
 
 
 def quote_windows_argument(value):
@@ -120,12 +157,18 @@ class StartupManager:
 
 
 class PointerRenderingManager:
+    def __init__(self):
+        self._system_cursor_handles = set()
+        self._custom_cursor_base_size_active = False
+
     def status_text(self):
+        mode = "custom cursor" if self._custom_cursor_base_size_active else "padded cursor"
         return (
             f"CursorSize={self.cursor_size()}  "
             f"CursorBaseSize={self.cursor_base_size()}  "
             f"GlyphSize={self.padded_glyph_size()}  "
-            f"MouseTrails={self.get_mouse_trails()}"
+            f"MouseTrails={self.get_mouse_trails()}  "
+            f"Mode={mode}"
         )
 
     def get_dword(self, path, name, default=0):
@@ -189,6 +232,45 @@ class PointerRenderingManager:
 
     def restore_default_cursor_base_size(self):
         self.apply_cursor_base_size(DEFAULT_CURSOR_BASE_SIZE)
+
+    def active_cursor_handle(self):
+        cursor_info = CURSORINFO()
+        cursor_info.cbSize = ctypes.sizeof(CURSORINFO)
+        if not user32.GetCursorInfo(ctypes.byref(cursor_info)):
+            error = ctypes.get_last_error()
+            raise OSError(error, "GetCursorInfo failed")
+        if not cursor_info.flags & CURSOR_SHOWING:
+            return None
+        return int(cursor_info.hCursor or 0) or None
+
+    def refresh_system_cursor_handles(self):
+        handles = set()
+        for cursor_id in SYSTEM_CURSOR_IDS:
+            handle = user32.LoadCursorW(None, ctypes.c_void_p(cursor_id))
+            if handle:
+                handles.add(int(handle))
+        self._system_cursor_handles = handles
+
+    def active_cursor_is_system_cursor(self):
+        handle = self.active_cursor_handle()
+        if handle is None:
+            return True
+        if not self._system_cursor_handles:
+            self.refresh_system_cursor_handles()
+        return handle in self._system_cursor_handles
+
+    def sync_cursor_base_size_for_active_cursor(self):
+        if self.active_cursor_is_system_cursor():
+            if self._custom_cursor_base_size_active:
+                self.apply_stable_cursor_base_size()
+                self._custom_cursor_base_size_active = False
+                return True
+            return False
+        if not self._custom_cursor_base_size_active:
+            self.restore_default_cursor_base_size()
+            self._custom_cursor_base_size_active = True
+            return True
+        return False
 
     def cursor_output_dir(self):
         return Path(__file__).resolve().parent / "generated_cursors"
@@ -441,7 +523,9 @@ class PointerRenderingManager:
         for role in FALLBACK_CURSOR_ROLES:
             self.set_registry_string(CURSORS_REGISTRY_PATH, role, str(padded_paths[role]))
         self.reload_cursors()
+        self.refresh_system_cursor_handles()
         self.apply_stable_cursor_base_size()
+        self._custom_cursor_base_size_active = False
 
     def apply_padded_cursor_scheme_from_saved_scheme(self, name):
         self.set_source_cursor_scheme(name)
@@ -567,6 +651,11 @@ class TrayController:
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self.handle_activation)
 
+        self.cursor_guard_timer = QTimer(self.app)
+        self.cursor_guard_timer.setInterval(CUSTOM_CURSOR_POLL_MS)
+        self.cursor_guard_timer.timeout.connect(self.sync_cursor_base_size_for_active_cursor)
+        self.cursor_guard_timer.start()
+
     def handle_activation(self, reason):
         if reason == QSystemTrayIcon.Trigger:
             self.menu.popup(self.tray.geometry().center())
@@ -589,6 +678,14 @@ class TrayController:
         self.pointer_rendering_manager.apply_padded_cursor_scheme_with_glyph_size(glyph_size)
         self.sync_glyph_size_actions()
         self.refresh_status()
+
+    def sync_cursor_base_size_for_active_cursor(self):
+        try:
+            changed = self.pointer_rendering_manager.sync_cursor_base_size_for_active_cursor()
+        except OSError:
+            return
+        if changed:
+            self.refresh_status()
 
     def sync_glyph_size_actions(self):
         current_glyph_size = self.pointer_rendering_manager.padded_glyph_size()
