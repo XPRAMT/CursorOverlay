@@ -1,180 +1,32 @@
-import ctypes
-import json
 import sys
 import winreg
+import ctypes
 from ctypes import wintypes
 from pathlib import Path
 
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, QSignalBlocker, QTimer, Signal, QPoint, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QImage, QImageReader, QPainter, QPen, QPixmap, QPolygon
+from PySide6.QtCore import QPoint, QSignalBlocker, Qt
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap, QPolygon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 
-user32 = ctypes.WinDLL("user32", use_last_error=True)
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-SPI_PRIVATE_SET_CURSOR_BASE_SIZE = 0x2029
-SPI_SETCURSORS = 0x0057
-SPIF_UPDATEINIFILE = 0x0001
-SPIF_SENDCHANGE = 0x0002
-STABLE_CURSOR_BASE_SIZE = 144
-DEFAULT_CURSOR_BASE_SIZE = 32
-PADDED_CURSOR_CANVAS_SIZE = 144
-DEFAULT_PADDED_CURSOR_GLYPH_SIZE = 48
 STARTUP_APP_NAME = "CursorOverlay"
 RUN_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-APP_REGISTRY_PATH = r"Software\CursorOverlay"
-ACCESSIBILITY_REGISTRY_PATH = r"Software\Microsoft\Accessibility"
-CURSORS_REGISTRY_PATH = r"Control Panel\Cursors"
-MOUSE_REGISTRY_PATH = r"Control Panel\Mouse"
-CURSOR_SIZE_VALUE = "CursorSize"
-CURSOR_BASE_SIZE_VALUE = "CursorBaseSize"
-MOUSE_TRAILS_VALUE = "MouseTrails"
-ORIGINAL_CURSORS_VALUE = "OriginalCursors"
-PADDED_GLYPH_SIZE_VALUE = "PaddedGlyphSize"
-PADDED_SCHEME_NAME = "CursorOverlay Padded Small"
-FALLBACK_CURSOR_ROLES = {
-    "Arrow": "aero_arrow.cur",
-    "Help": "aero_helpsel.cur",
-    "Hand": "aero_link.cur",
-    "No": "aero_unavail.cur",
-    "SizeNS": "aero_ns.cur",
-    "SizeWE": "aero_ew.cur",
-    "SizeNWSE": "aero_nwse.cur",
-    "SizeNESW": "aero_nesw.cur",
-    "SizeAll": "aero_move.cur",
-    "NWPen": "aero_pen.cur",
-    "UpArrow": "aero_up.cur",
-    "Pin": "aero_pin.cur",
-    "Person": "aero_person.cur",
-    "IBeam": "beam_r.cur",
-    "Crosshair": "cross_r.cur",
-    "Wait": "wait_r.cur",
-    "AppStarting": "busy_r.cur",
-}
-SCHEME_ROLE_ORDER = [
-    "Arrow",
-    "Help",
-    "AppStarting",
-    "Wait",
-    "Crosshair",
-    "IBeam",
-    "NWPen",
-    "No",
-    "SizeNS",
-    "SizeWE",
-    "SizeNWSE",
-    "SizeNESW",
-    "SizeAll",
-    "UpArrow",
-    "Hand",
-    "Pin",
-    "Person",
-]
-CURSOR_SHOWING = 0x00000001
-EVENT_SYSTEM_CURSORCHANGE = 0x0001
-EVENT_OBJECT_LOCATIONCHANGE = 0x800B
-OBJID_CURSOR = -9
-WINEVENT_OUTOFCONTEXT = 0x0000
-WH_MOUSE_LL = 14
-WM_MOUSEMOVE = 0x0200
-MOUSE_CURSOR_CHECK_DELAY_MS = 100
-SYSTEM_CURSOR_IDS = [
-    32512,  # OCR_NORMAL
-    32513,  # OCR_IBEAM
-    32514,  # OCR_WAIT
-    32515,  # OCR_CROSS
-    32516,  # OCR_UP
-    32642,  # OCR_SIZENWSE
-    32643,  # OCR_SIZENESW
-    32644,  # OCR_SIZEWE
-    32645,  # OCR_SIZENS
-    32646,  # OCR_SIZEALL
-    32648,  # OCR_NO
-    32649,  # OCR_HAND
-    32650,  # OCR_APPSTARTING
-    32651,  # OCR_HELP
-    32671,  # OCR_PIN
-    32672,  # OCR_PERSON
-]
 
-
-class POINT(ctypes.Structure):
-    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
-
-
-class CURSORINFO(ctypes.Structure):
-    _fields_ = [
-        ("cbSize", wintypes.DWORD),
-        ("flags", wintypes.DWORD),
-        ("hCursor", wintypes.HANDLE),
-        ("ptScreenPos", POINT),
-    ]
-
-
-WINEVENTPROC = ctypes.WINFUNCTYPE(
-    None,
-    wintypes.HANDLE,
-    wintypes.DWORD,
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+kernel32.GetCurrentProcessId.argtypes = []
+kernel32.GetCurrentProcessId.restype = wintypes.DWORD
+kernel32.ProcessIdToSessionId.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+kernel32.ProcessIdToSessionId.restype = wintypes.BOOL
+shell32.ShellExecuteW.argtypes = [
     wintypes.HWND,
-    wintypes.LONG,
-    wintypes.LONG,
-    wintypes.DWORD,
-    wintypes.DWORD,
-)
-LOWLEVELMOUSEPROC = ctypes.WINFUNCTYPE(
-    wintypes.LPARAM,
+    wintypes.LPCWSTR,
+    wintypes.LPCWSTR,
+    wintypes.LPCWSTR,
+    wintypes.LPCWSTR,
     ctypes.c_int,
-    wintypes.WPARAM,
-    wintypes.LPARAM,
-)
-
-
-user32.SystemParametersInfoW.argtypes = [
-    wintypes.UINT,
-    wintypes.UINT,
-    wintypes.LPVOID,
-    wintypes.UINT,
 ]
-user32.SystemParametersInfoW.restype = wintypes.BOOL
-user32.GetCursorInfo.argtypes = [ctypes.POINTER(CURSORINFO)]
-user32.GetCursorInfo.restype = wintypes.BOOL
-user32.LoadCursorW.argtypes = [wintypes.HINSTANCE, wintypes.LPVOID]
-user32.LoadCursorW.restype = wintypes.HANDLE
-user32.SetWinEventHook.argtypes = [
-    wintypes.DWORD,
-    wintypes.DWORD,
-    wintypes.HMODULE,
-    WINEVENTPROC,
-    wintypes.DWORD,
-    wintypes.DWORD,
-    wintypes.DWORD,
-]
-user32.SetWinEventHook.restype = wintypes.HANDLE
-user32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
-user32.UnhookWinEvent.restype = wintypes.BOOL
-user32.SetWindowsHookExW.argtypes = [
-    ctypes.c_int,
-    LOWLEVELMOUSEPROC,
-    wintypes.HINSTANCE,
-    wintypes.DWORD,
-]
-user32.SetWindowsHookExW.restype = wintypes.HANDLE
-user32.CallNextHookEx.argtypes = [
-    wintypes.HANDLE,
-    ctypes.c_int,
-    wintypes.WPARAM,
-    wintypes.LPARAM,
-]
-user32.CallNextHookEx.restype = wintypes.LPARAM
-user32.UnhookWindowsHookEx.argtypes = [wintypes.HANDLE]
-user32.UnhookWindowsHookEx.restype = wintypes.BOOL
-kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
-kernel32.GetModuleHandleW.restype = wintypes.HMODULE
-
-
-class CursorCheckDispatcher(QObject):
-    requested = Signal(int)
+shell32.ShellExecuteW.restype = wintypes.HINSTANCE
 
 
 def quote_windows_argument(value):
@@ -215,413 +67,33 @@ class StartupManager:
                     pass
 
 
-class PointerRenderingManager:
-    def __init__(self):
-        self._system_cursor_handles = set()
-        self._custom_cursor_base_size_active = False
+class DwmManager:
+    def current_session_id(self):
+        session_id = wintypes.DWORD()
+        process_id = kernel32.GetCurrentProcessId()
+        if not kernel32.ProcessIdToSessionId(process_id, ctypes.byref(session_id)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return int(session_id.value)
 
-    def status_text(self):
-        mode = "custom cursor" if self._custom_cursor_base_size_active else "padded cursor"
-        return (
-            f"CursorSize={self.cursor_size()}  "
-            f"CursorBaseSize={self.cursor_base_size()}  "
-            f"GlyphSize={self.padded_glyph_size()}  "
-            f"MouseTrails={self.get_mouse_trails()}  "
-            f"Mode={mode}"
+    def restart(self):
+        session_id = self.current_session_id()
+        command = (
+            "Start-Process taskkill "
+            f"-ArgumentList '/f','/fi','imagename eq dwm.exe','/fi','session eq {session_id}' "
+            "-WindowStyle Hidden -Wait"
         )
-
-    def get_dword(self, path, name, default=0):
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ) as key:
-                value, _ = winreg.QueryValueEx(key, name)
-        except FileNotFoundError:
-            return default
-        return int(value)
-
-    def set_dword(self, path, name, value):
-        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
-            winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, int(value))
-
-    def get_registry_string(self, path, name, default=""):
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ) as key:
-                value, _ = winreg.QueryValueEx(key, name)
-        except FileNotFoundError:
-            return default
-        return str(value)
-
-    def set_registry_string(self, path, name, value):
-        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
-            winreg.SetValueEx(key, name, 0, winreg.REG_EXPAND_SZ, str(value))
-
-    def padded_glyph_size(self):
-        value = self.get_dword(APP_REGISTRY_PATH, PADDED_GLYPH_SIZE_VALUE, DEFAULT_PADDED_CURSOR_GLYPH_SIZE)
-        return max(16, min(PADDED_CURSOR_CANVAS_SIZE, value))
-
-    def set_padded_glyph_size(self, value):
-        self.set_dword(APP_REGISTRY_PATH, PADDED_GLYPH_SIZE_VALUE, value)
-
-    def cursor_size(self):
-        return self.get_dword(ACCESSIBILITY_REGISTRY_PATH, CURSOR_SIZE_VALUE, 1)
-
-    def cursor_base_size(self):
-        return self.get_dword(CURSORS_REGISTRY_PATH, CURSOR_BASE_SIZE_VALUE, 32)
-
-    def get_mouse_trails(self):
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, MOUSE_REGISTRY_PATH, 0, winreg.KEY_READ) as key:
-                value, _ = winreg.QueryValueEx(key, MOUSE_TRAILS_VALUE)
-        except FileNotFoundError:
-            return "0"
-        return str(value)
-
-    def apply_cursor_base_size(self, cursor_base_size):
-        ctypes.set_last_error(0)
-        if not user32.SystemParametersInfoW(
-            SPI_PRIVATE_SET_CURSOR_BASE_SIZE,
+        result = shell32.ShellExecuteW(
+            None,
+            "runas",
+            "powershell.exe",
+            f'-NoProfile -ExecutionPolicy Bypass -Command "{command}"',
+            None,
             0,
-            ctypes.c_void_p(int(cursor_base_size)),
-            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
-        ):
-            error = ctypes.get_last_error()
-            raise OSError(error, f"SystemParametersInfoW(0x2029, {cursor_base_size}) failed")
-
-    def apply_stable_cursor_base_size(self):
-        self.apply_cursor_base_size(STABLE_CURSOR_BASE_SIZE)
-
-    def restore_default_cursor_base_size(self):
-        self.apply_cursor_base_size(DEFAULT_CURSOR_BASE_SIZE)
-
-    def active_cursor_handle(self):
-        cursor_info = CURSORINFO()
-        cursor_info.cbSize = ctypes.sizeof(CURSORINFO)
-        if not user32.GetCursorInfo(ctypes.byref(cursor_info)):
-            error = ctypes.get_last_error()
-            raise OSError(error, "GetCursorInfo failed")
-        if not cursor_info.flags & CURSOR_SHOWING:
-            return None
-        return int(cursor_info.hCursor or 0) or None
-
-    def refresh_system_cursor_handles(self):
-        handles = set()
-        for cursor_id in SYSTEM_CURSOR_IDS:
-            handle = user32.LoadCursorW(None, ctypes.c_void_p(cursor_id))
-            if handle:
-                handles.add(int(handle))
-        self._system_cursor_handles = handles
-
-    def active_cursor_is_system_cursor(self):
-        handle = self.active_cursor_handle()
-        if handle is None:
-            return True
-        if not self._system_cursor_handles:
-            self.refresh_system_cursor_handles()
-        return handle in self._system_cursor_handles
-
-    def sync_cursor_base_size_for_active_cursor(self):
-        if self.active_cursor_is_system_cursor():
-            if self._custom_cursor_base_size_active:
-                self.apply_stable_cursor_base_size()
-                self._custom_cursor_base_size_active = False
-                return True
-            return False
-        if not self._custom_cursor_base_size_active:
-            self.restore_default_cursor_base_size()
-            self._custom_cursor_base_size_active = True
-            return True
-        return False
-
-    def cursor_output_dir(self):
-        return Path(__file__).resolve().parent / "generated_cursors"
-
-    def fallback_cursor_source_path(self, role):
-        return Path(r"C:\Windows\Cursors") / FALLBACK_CURSOR_ROLES[role]
-
-    def resolve_cursor_path(self, value):
-        if not value:
-            return None
-        expanded = winreg.ExpandEnvironmentStrings(str(value))
-        path = Path(expanded)
-        return path if path.exists() else None
-
-    def padded_cursor_path(self, role, source):
-        extension = ".ani" if source.suffix.lower() == ".ani" else ".cur"
-        return self.cursor_output_dir() / f"cursor_overlay_{role.lower()}{extension}"
-
-    def ensure_padded_cursor_scheme(self):
-        self.cursor_output_dir().mkdir(exist_ok=True)
-        padded_paths = {}
-        source_values = self.original_or_current_cursor_values()
-        for role in FALLBACK_CURSOR_ROLES:
-            source = self.resolve_cursor_path(source_values.get(role)) or self.fallback_cursor_source_path(role)
-            target = self.padded_cursor_path(role, source)
-            try:
-                self.write_padded_cursor(source, target)
-            except ValueError:
-                fallback_source = self.fallback_cursor_source_path(role)
-                if fallback_source == source:
-                    raise
-                target = self.padded_cursor_path(role, fallback_source)
-                self.write_padded_cursor(fallback_source, target)
-            padded_paths[role] = target
-        return padded_paths
-
-    def write_padded_cursor(self, source, target):
-        data = source.read_bytes()
-        if data[:4] == b"RIFF":
-            target.write_bytes(self.build_padded_ani(data, source))
-            return
-        target.write_bytes(self.build_padded_cursor_from_data(data, source))
-
-    def build_padded_cursor_from_data(self, data, source):
-        image, hot_x, hot_y = self.read_best_cursor_frame(data, source, self.padded_glyph_size())
-        canvas = QImage(PADDED_CURSOR_CANVAS_SIZE, PADDED_CURSOR_CANVAS_SIZE, QImage.Format_ARGB32)
-        canvas.fill(Qt.transparent)
-
-        painter = QPainter(canvas)
-        painter.drawImage(0, 0, image)
-        painter.end()
-
-        png_data = self.image_to_png_bytes(canvas)
-        return self.build_cursor_file(
-            png_data,
-            self.padded_glyph_size(),
-            hot_x,
-            hot_y,
         )
-
-    def read_best_cursor_frame(self, data, source, target_size):
-        reserved = int.from_bytes(data[0:2], "little")
-        cursor_type = int.from_bytes(data[2:4], "little")
-        image_count = int.from_bytes(data[4:6], "little")
-        if reserved != 0 or cursor_type != 2 or image_count <= 0:
-            raise ValueError(f"Not a cursor file: {source}")
-
-        entries = []
-        for index in range(image_count):
-            offset = 6 + index * 16
-            width = data[offset] or 256
-            height = data[offset + 1] or 256
-            hot_x = int.from_bytes(data[offset + 4 : offset + 6], "little")
-            hot_y = int.from_bytes(data[offset + 6 : offset + 8], "little")
-            entries.append((width, height, hot_x, hot_y, index))
-
-        width, height, hot_x, hot_y, index = min(
-            entries,
-            key=lambda item: (
-                item[0] < target_size or item[1] < target_size,
-                abs(item[0] - target_size) + abs(item[1] - target_size),
-                item[0] * item[1],
-            ),
-        )
-        byte_array = QByteArray(data)
-        buffer = QBuffer(byte_array)
-        buffer.open(QIODevice.ReadOnly)
-        reader = QImageReader(buffer, b"cur")
-        if not reader.jumpToImage(index):
-            raise ValueError(f"Cannot select cursor frame {index}: {source}")
-        image = reader.read()
-        if image.isNull():
-            raise ValueError(f"Cannot read cursor image: {source}: {reader.errorString()}")
-        if image.width() != target_size or image.height() != target_size:
-            original_width = image.width()
-            original_height = image.height()
-            image = image.scaled(
-                target_size,
-                target_size,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-            hot_x = round(hot_x * image.width() / original_width)
-            hot_y = round(hot_y * image.height() / original_height)
-        return image.convertToFormat(QImage.Format_ARGB32), hot_x, hot_y
-
-    def read_smallest_cursor_frame(self, data, source):
-        return self.read_best_cursor_frame(data, source, 16)
-
-    def build_padded_ani(self, data, source):
-        if data[:4] != b"RIFF" or data[8:12] != b"ACON":
-            raise ValueError(f"Not an animated cursor file: {source}")
-        body = self.rebuild_ani_chunks(data, 12, len(data), source)
-        return b"RIFF" + (len(body) + 4).to_bytes(4, "little") + b"ACON" + body
-
-    def rebuild_ani_chunks(self, data, start, end, source):
-        output = bytearray()
-        offset = start
-        while offset + 8 <= end:
-            chunk_id = data[offset : offset + 4]
-            chunk_size = int.from_bytes(data[offset + 4 : offset + 8], "little")
-            chunk_start = offset + 8
-            chunk_end = min(chunk_start + chunk_size, end)
-            chunk_data = data[chunk_start:chunk_end]
-
-            if chunk_id == b"icon":
-                chunk_data = self.build_padded_cursor_from_data(chunk_data, source)
-                chunk_size = len(chunk_data)
-                output += chunk_id + chunk_size.to_bytes(4, "little") + chunk_data
-            elif chunk_id in (b"RIFF", b"LIST") and len(chunk_data) >= 4:
-                list_type = chunk_data[:4]
-                nested = self.rebuild_ani_chunks(chunk_data, 4, len(chunk_data), source)
-                rebuilt = list_type + nested
-                output += chunk_id + len(rebuilt).to_bytes(4, "little") + rebuilt
-                chunk_size = len(rebuilt)
-            else:
-                output += chunk_id + chunk_size.to_bytes(4, "little") + chunk_data
-
-            if chunk_size & 1:
-                output += b"\x00"
-            offset = chunk_end + (int.from_bytes(data[offset + 4 : offset + 8], "little") & 1)
-        return bytes(output)
-
-    def extract_first_ani_cursor(self, data, source):
-        offset = 12 if data[:4] == b"RIFF" else 0
-        while offset + 8 <= len(data):
-            chunk_id = data[offset : offset + 4]
-            chunk_size = int.from_bytes(data[offset + 4 : offset + 8], "little")
-            chunk_start = offset + 8
-            chunk_end = chunk_start + chunk_size
-            if chunk_id == b"icon":
-                return data[chunk_start:chunk_end]
-            if chunk_id in (b"RIFF", b"LIST"):
-                nested = self.extract_first_ani_cursor(data[chunk_start + 4 : chunk_end], source)
-                if nested:
-                    return nested
-            offset = chunk_end + (chunk_size & 1)
-        raise ValueError(f"Animated cursor has no icon frame: {source}")
-
-    def image_to_png_bytes(self, image):
-        byte_array = QByteArray()
-        buffer = QBuffer(byte_array)
-        buffer.open(QIODevice.WriteOnly)
-        image.save(buffer, "PNG")
-        buffer.close()
-        return bytes(byte_array)
-
-    def build_cursor_file(self, png_data, nominal_size, hot_x, hot_y):
-        width_byte = 0 if nominal_size >= 256 else nominal_size
-        header = (0).to_bytes(2, "little") + (2).to_bytes(2, "little") + (1).to_bytes(2, "little")
-        entry = bytes([width_byte, width_byte, 0, 0])
-        entry += int(hot_x).to_bytes(2, "little")
-        entry += int(hot_y).to_bytes(2, "little")
-        entry += len(png_data).to_bytes(4, "little")
-        entry += (22).to_bytes(4, "little")
-        return header + entry + png_data
-
-    def current_cursor_values(self):
-        values = {"": self.get_registry_string(CURSORS_REGISTRY_PATH, "", "")}
-        for role in FALLBACK_CURSOR_ROLES:
-            values[role] = self.get_registry_string(CURSORS_REGISTRY_PATH, role, "")
-        return values
-
-    def save_original_cursor_values(self, values):
-        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_ALL_ACCESS) as key:
-            winreg.SetValueEx(key, ORIGINAL_CURSORS_VALUE, 0, winreg.REG_SZ, json.dumps(values))
-
-    def is_current_padded_scheme(self):
-        scheme_name = self.get_registry_string(CURSORS_REGISTRY_PATH, "", "")
-        arrow = self.get_registry_string(CURSORS_REGISTRY_PATH, "Arrow", "")
-        return scheme_name == PADDED_SCHEME_NAME or "generated_cursors" in arrow
-
-    def saved_cursor_schemes(self):
-        schemes = {}
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CURSORS_REGISTRY_PATH + r"\Schemes", 0, winreg.KEY_READ) as key:
-                index = 0
-                while True:
-                    try:
-                        name, value, _ = winreg.EnumValue(key, index)
-                    except OSError:
-                        break
-                    values = [item.strip() for item in str(value).split(",")]
-                    scheme = {"": name}
-                    for role, cursor_value in zip(SCHEME_ROLE_ORDER, values):
-                        scheme[role] = cursor_value
-                    schemes[name] = scheme
-                    index += 1
-        except FileNotFoundError:
-            pass
-        return schemes
-
-    def default_cursor_scheme_values(self):
-        values = {"": ""}
-        for role in FALLBACK_CURSOR_ROLES:
-            values[role] = str(self.fallback_cursor_source_path(role))
-        return values
-
-    def set_source_default_cursor_scheme(self):
-        self.save_original_cursor_values(self.default_cursor_scheme_values())
-
-    def set_source_cursor_scheme(self, name):
-        schemes = self.saved_cursor_schemes()
-        if name not in schemes:
-            raise KeyError(f"Cursor scheme not found: {name}")
-        self.save_original_cursor_values(schemes[name])
-
-    def backup_current_cursor_scheme(self, force=False):
-        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_ALL_ACCESS) as key:
-            if not force:
-                try:
-                    winreg.QueryValueEx(key, ORIGINAL_CURSORS_VALUE)
-                    return
-                except FileNotFoundError:
-                    pass
-            winreg.SetValueEx(key, ORIGINAL_CURSORS_VALUE, 0, winreg.REG_SZ, json.dumps(self.current_cursor_values()))
-
-    def original_or_current_cursor_values(self):
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_READ) as key:
-                raw_values, _ = winreg.QueryValueEx(key, ORIGINAL_CURSORS_VALUE)
-            return json.loads(raw_values)
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return self.current_cursor_values()
-
-    def apply_padded_cursor_scheme(self):
-        self.backup_current_cursor_scheme(force=not self.is_current_padded_scheme())
-        padded_paths = self.ensure_padded_cursor_scheme()
-        self.set_registry_string(CURSORS_REGISTRY_PATH, "", PADDED_SCHEME_NAME)
-        for role in FALLBACK_CURSOR_ROLES:
-            self.set_registry_string(CURSORS_REGISTRY_PATH, role, str(padded_paths[role]))
-        self.reload_cursors()
-        self.refresh_system_cursor_handles()
-        self.apply_stable_cursor_base_size()
-        self._custom_cursor_base_size_active = False
-
-    def apply_padded_cursor_scheme_from_saved_scheme(self, name):
-        self.set_source_cursor_scheme(name)
-        self.apply_padded_cursor_scheme()
-
-    def apply_padded_cursor_scheme_from_default_scheme(self):
-        self.set_source_default_cursor_scheme()
-        self.apply_padded_cursor_scheme()
-
-    def apply_padded_cursor_scheme_with_glyph_size(self, glyph_size):
-        self.set_padded_glyph_size(glyph_size)
-        self.apply_padded_cursor_scheme()
-
-    def restore_original_cursor_scheme(self):
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_READ) as key:
-                raw_values, _ = winreg.QueryValueEx(key, ORIGINAL_CURSORS_VALUE)
-        except FileNotFoundError:
-            return
-        values = json.loads(raw_values)
-        self.set_registry_string(CURSORS_REGISTRY_PATH, "", values.get("", ""))
-        for role, value in values.items():
-            if role:
-                self.set_registry_string(CURSORS_REGISTRY_PATH, role, value)
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APP_REGISTRY_PATH, 0, winreg.KEY_SET_VALUE) as key:
-            try:
-                winreg.DeleteValue(key, ORIGINAL_CURSORS_VALUE)
-            except FileNotFoundError:
-                pass
-        self.reload_cursors()
-
-    def restore_on_exit(self):
-        self.restore_original_cursor_scheme()
-        self.restore_default_cursor_base_size()
-
-    def reload_cursors(self):
-        user32.SystemParametersInfoW(SPI_SETCURSORS, 0, None, SPIF_SENDCHANGE)
+        if int(result) <= 32:
+            if int(result) == 1223:
+                raise OSError(1223, "Administrator approval was canceled")
+            raise OSError(int(result), "ShellExecuteW runas failed")
 
 
 def create_tray_icon():
@@ -630,72 +102,39 @@ def create_tray_icon():
 
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(QPen(QColor("#0f172a"), 4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.setBrush(QColor("#f8fafc"))
+    painter.setPen(QPen(QColor("#111827"), 4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    painter.setBrush(QColor("#f9fafb"))
     pointer = QPolygon(
         [
-            QPoint(14, 8),
-            QPoint(14, 48),
-            QPoint(27, 38),
-            QPoint(35, 56),
-            QPoint(44, 52),
-            QPoint(36, 35),
-            QPoint(52, 35),
+            QPoint(15, 8),
+            QPoint(15, 47),
+            QPoint(27, 37),
+            QPoint(35, 55),
+            QPoint(44, 51),
+            QPoint(36, 34),
+            QPoint(51, 34),
         ]
     )
     painter.drawPolygon(pointer)
-    painter.setPen(QPen(QColor("#38bdf8"), 5, Qt.SolidLine, Qt.RoundCap))
-    painter.drawEllipse(38, 38, 16, 16)
+    painter.setPen(QPen(QColor("#10b981"), 5, Qt.SolidLine, Qt.RoundCap))
+    painter.drawArc(38, 38, 16, 16, 20 * 16, 300 * 16)
     painter.end()
     return QIcon(pixmap)
 
 
 class TrayController:
-    def __init__(self, app, tray, startup_manager, pointer_rendering_manager):
+    def __init__(self, app, tray, startup_manager, dwm_manager):
         self.app = app
         self.tray = tray
         self.startup_manager = startup_manager
-        self.pointer_rendering_manager = pointer_rendering_manager
-        self.cursor_event_hook = None
-        self.cursor_event_callback = None
-        self.mouse_hook = None
-        self.mouse_hook_callback = None
-        self.cursor_check_pending = False
-        self.cursor_check_dispatcher = CursorCheckDispatcher(self.app)
-        self.cursor_check_dispatcher.requested.connect(self.queue_cursor_check, Qt.QueuedConnection)
+        self.dwm_manager = dwm_manager
 
         self.menu = QMenu()
-        self.status_action = QAction(self.pointer_rendering_manager.status_text())
+        self.status_action = QAction("DWM restart workaround")
         self.status_action.setEnabled(False)
 
-        self.saved_schemes_menu = QMenu("Use saved cursor scheme")
-        self.saved_scheme_actions = []
-        default_action = self.saved_schemes_menu.addAction("Restore system default")
-        default_action.triggered.connect(self.apply_padded_cursor_scheme_from_default_scheme)
-        self.saved_scheme_actions.append(default_action)
-        self.saved_schemes_menu.addSeparator()
-        for scheme_name in sorted(self.pointer_rendering_manager.saved_cursor_schemes()):
-            action = self.saved_schemes_menu.addAction(scheme_name)
-            action.triggered.connect(
-                lambda checked=False, name=scheme_name: self.apply_padded_cursor_scheme_from_saved_scheme(name)
-            )
-            self.saved_scheme_actions.append(action)
-        if len(self.saved_scheme_actions) == 1:
-            empty_action = self.saved_schemes_menu.addAction("No saved schemes")
-            empty_action.setEnabled(False)
-            self.saved_scheme_actions.append(empty_action)
-
-        self.glyph_size_menu = QMenu("Glyph size")
-        self.glyph_size_actions = []
-        current_glyph_size = self.pointer_rendering_manager.padded_glyph_size()
-        for glyph_size in (32, 48, 64, 96):
-            action = self.glyph_size_menu.addAction(f"{glyph_size}px")
-            action.setCheckable(True)
-            action.setChecked(glyph_size == current_glyph_size)
-            action.triggered.connect(
-                lambda checked=False, size=glyph_size: self.apply_padded_cursor_scheme_with_glyph_size(size)
-            )
-            self.glyph_size_actions.append(action)
+        self.restart_dwm_action = QAction("Restart Desktop Window Manager")
+        self.restart_dwm_action.triggered.connect(self.restart_dwm)
 
         self.startup_action = QAction("Start with Windows")
         self.startup_action.setCheckable(True)
@@ -707,8 +146,7 @@ class TrayController:
 
         self.menu.addAction(self.status_action)
         self.menu.addSeparator()
-        self.menu.addMenu(self.saved_schemes_menu)
-        self.menu.addMenu(self.glyph_size_menu)
+        self.menu.addAction(self.restart_dwm_action)
         self.menu.addSeparator()
         self.menu.addAction(self.startup_action)
         self.menu.addSeparator()
@@ -717,111 +155,33 @@ class TrayController:
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self.handle_activation)
 
-        self.start_cursor_event_monitor()
-        self.start_mouse_event_monitor()
-        self.app.aboutToQuit.connect(self.stop_cursor_event_monitor)
-        self.app.aboutToQuit.connect(self.stop_mouse_event_monitor)
-
-    def start_cursor_event_monitor(self):
-        self.cursor_event_callback = WINEVENTPROC(self.handle_cursor_win_event)
-        self.cursor_event_hook = user32.SetWinEventHook(
-            EVENT_SYSTEM_CURSORCHANGE,
-            EVENT_OBJECT_LOCATIONCHANGE,
-            None,
-            self.cursor_event_callback,
-            0,
-            0,
-            WINEVENT_OUTOFCONTEXT,
-        )
-
-    def stop_cursor_event_monitor(self):
-        if self.cursor_event_hook:
-            user32.UnhookWinEvent(self.cursor_event_hook)
-            self.cursor_event_hook = None
-        self.cursor_event_callback = None
-
-    def start_mouse_event_monitor(self):
-        self.mouse_hook_callback = LOWLEVELMOUSEPROC(self.handle_mouse_hook_event)
-        self.mouse_hook = user32.SetWindowsHookExW(
-            WH_MOUSE_LL,
-            self.mouse_hook_callback,
-            kernel32.GetModuleHandleW(None),
-            0,
-        )
-
-    def stop_mouse_event_monitor(self):
-        if self.mouse_hook:
-            user32.UnhookWindowsHookEx(self.mouse_hook)
-            self.mouse_hook = None
-        self.mouse_hook_callback = None
-
-    def handle_cursor_win_event(self, hook, event, hwnd, object_id, child_id, event_thread, event_time):
-        if event == EVENT_SYSTEM_CURSORCHANGE:
-            self.request_cursor_check()
-            return
-        if event == EVENT_OBJECT_LOCATIONCHANGE and object_id == OBJID_CURSOR:
-            self.request_cursor_check()
-            return
-
-    def handle_mouse_hook_event(self, code, wparam, lparam):
-        if code >= 0 and wparam == WM_MOUSEMOVE:
-            self.request_cursor_check(MOUSE_CURSOR_CHECK_DELAY_MS)
-        return user32.CallNextHookEx(self.mouse_hook, code, wparam, lparam)
-
-    def request_cursor_check(self, delay_ms=0):
-        self.cursor_check_dispatcher.requested.emit(delay_ms)
-
-    def queue_cursor_check(self, delay_ms):
-        if self.cursor_check_pending:
-            return
-        self.cursor_check_pending = True
-        if delay_ms:
-            QTimer.singleShot(delay_ms, self.run_deferred_cursor_check)
-        else:
-            self.run_deferred_cursor_check()
-
-    def run_deferred_cursor_check(self):
-        self.cursor_check_pending = False
-        self.sync_cursor_base_size_for_active_cursor()
-
     def handle_activation(self, reason):
         if reason == QSystemTrayIcon.Trigger:
             self.menu.popup(self.tray.geometry().center())
+
+    def restart_dwm(self):
+        self.restart_dwm_action.setEnabled(False)
+        self.status_action.setText("Requesting administrator approval...")
+        try:
+            self.dwm_manager.restart()
+        except OSError as error:
+            self.status_action.setText("DWM restart failed")
+            self.tray.showMessage("Cursor Overlay", f"Failed to restart DWM: {error}", QSystemTrayIcon.Warning)
+        else:
+            self.status_action.setText("DWM restart requested")
+            self.tray.showMessage(
+                "Cursor Overlay",
+                "Administrator taskkill request was started.",
+                QSystemTrayIcon.Information,
+            )
+        finally:
+            self.restart_dwm_action.setEnabled(True)
 
     def set_startup_enabled(self, enabled):
         self.startup_manager.set_enabled(enabled)
         blocker = QSignalBlocker(self.startup_action)
         self.startup_action.setChecked(self.startup_manager.is_enabled())
         del blocker
-
-    def apply_padded_cursor_scheme_from_saved_scheme(self, name):
-        self.pointer_rendering_manager.apply_padded_cursor_scheme_from_saved_scheme(name)
-        self.refresh_status()
-
-    def apply_padded_cursor_scheme_from_default_scheme(self):
-        self.pointer_rendering_manager.apply_padded_cursor_scheme_from_default_scheme()
-        self.refresh_status()
-
-    def apply_padded_cursor_scheme_with_glyph_size(self, glyph_size):
-        self.pointer_rendering_manager.apply_padded_cursor_scheme_with_glyph_size(glyph_size)
-        self.sync_glyph_size_actions()
-        self.refresh_status()
-
-    def sync_cursor_base_size_for_active_cursor(self):
-        try:
-            changed = self.pointer_rendering_manager.sync_cursor_base_size_for_active_cursor()
-        except OSError:
-            return
-        if changed:
-            self.refresh_status()
-
-    def sync_glyph_size_actions(self):
-        current_glyph_size = self.pointer_rendering_manager.padded_glyph_size()
-        for action in self.glyph_size_actions:
-            action.setChecked(action.text() == f"{current_glyph_size}px")
-
-    def refresh_status(self):
-        self.status_action.setText(self.pointer_rendering_manager.status_text())
 
     def quit(self):
         self.tray.hide()
@@ -832,13 +192,9 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
-    pointer_rendering_manager = PointerRenderingManager()
-    pointer_rendering_manager.apply_padded_cursor_scheme()
-    app.aboutToQuit.connect(pointer_rendering_manager.restore_on_exit)
-
     tray = QSystemTrayIcon(create_tray_icon())
     tray.setToolTip("Cursor Overlay")
-    tray_controller = TrayController(app, tray, StartupManager(), pointer_rendering_manager)
+    tray_controller = TrayController(app, tray, StartupManager(), DwmManager())
     tray.show()
 
     app.tray_controller = tray_controller

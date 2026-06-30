@@ -2,24 +2,29 @@
 
 [English](README.md) | 繁體中文
 
-Cursor Overlay 是一個 Windows 系統匣工具，用來測試是否能強制 Windows 避開會閃爍的一般游標渲染路徑。
+Cursor Overlay 是一個 Windows system tray 小工具，用來處理 Windows 11
+Insider Experimental 26300.x 的游標閃爍 regression。
 
-這個 app 現在不建立任何 overlay 視窗、不自繪游標，也不隱藏或替換系統游標。它會測試一個未公開的 cursor base size runtime apply call，這個呼叫看起來比直接寫 registry 更接近 Windows Settings 改變指標大小時使用的路徑。
-
-實用 workaround 是 padded cursor scheme：Windows 看到的是 `CursorBaseSize=144`，但 cursor 檔案本身是在 144 px 透明畫布上放一個較小的圖形。這樣可以保留穩定渲染路徑，同時避免肉眼看到巨大游標。
+目前確認有效的 workaround 是重啟 Desktop Window Manager (`dwm.exe`)。本機測試
+顯示，從工作管理員手動停止 Desktop Window Manager 後，Windows 會自動重新啟動
+DWM，游標閃爍會完全消失，直到下次關機或重新開機。
 
 ## 背景
 
-在 Windows 11 Insider Experimental build 26300.x 上，指標大小 1-7 會閃爍，有時還會變成半透明。指標大小改成 8 或以上後會立即停止閃爍，這強烈暗示 Windows 在這個門檻切換了游標渲染路徑。
+在 Windows 11 Insider Experimental 26300.x 上，游標閃爍最早主要出現在 DXGI
+Desktop Duplication 擷取路徑，而 Windows Graphics Capture 正常。到了
+26300.8697，問題變嚴重，本機畫面上的游標也開始閃爍，但 WGC 擷取出來的游標仍然正常。
 
-本機測試顯示，表面的 `CursorSize` 數值不是關鍵 gate。只有 `CursorBaseSize` 至少為 `144` 時才會停止閃爍。
+前面的測試曾發現 `CursorBaseSize >= 144` 可以避開會閃爍的路徑，但這個 workaround
+會影響游標大小行為，也會牽涉 app 自訂游標。重啟 DWM 是比較乾淨的暫時解法，因為它直接重置壞掉的 compositor 狀態。
 
 ## 功能
 
 - 只在 system tray 執行。
-- 啟動時會產生並套用 padded small cursor scheme。
-- 啟動時會自動套用 `CursorBaseSize=144`，但不改變 `CursorSize`。
-- 程式退出時會恢復原始 cursor scheme，並還原預設 `CursorBaseSize=32`。
+- 提供 `Restart Desktop Window Manager` tray action。
+- 不建立 overlay 視窗。
+- 不自繪、不隱藏、不替換、不縮放、不 hook 系統游標。
+- 不修改 `CursorSize`、`CursorBaseSize` 或 cursor scheme。
 - 可選擇透過 Windows Run registry key 設定目前使用者的開機自啟。
 
 ## 需求
@@ -40,45 +45,26 @@ python -m pip install -r requirements.txt
 python cursor_overlay.pyw
 ```
 
-程式啟動後會出現在 system tray。右鍵點擊 tray icon 可開啟選單。啟動時會自動套用 padded cursor scheme 和穩定的 `CursorBaseSize=144` 路徑。
+程式啟動後會出現在 system tray。右鍵點擊 tray icon 可開啟選單。
 
 ## System Tray 選單
 
-- `Use saved cursor scheme`：選擇 Windows 已儲存的 cursor scheme 作為重新產生 padded cursor 的圖案來源，或恢復使用 Windows 系統預設游標來源。
-- `Glyph size`：用不同可視圖形大小重新產生 padded cursor scheme。數值越大細節越多，但看起來也越大。
+- `Restart Desktop Window Manager`：要求系統管理員權限，然後對目前 Windows session 的 `dwm.exe` 執行 `taskkill`。Windows 會自動重新啟動 DWM。
 - `Start with Windows`：切換登入 Windows 後自動啟動。
-- `Quit`：恢復原始 cursor scheme、還原 `CursorBaseSize=32`、隱藏 tray icon，並結束程式。
+- `Quit`：隱藏 tray icon 並結束程式。
 
-啟用 `Start with Windows` 後，每次使用者登入時都會重新套用 padded cursor scheme 和穩定 base size。
-
-## Runtime Apply Path
-
-app 會保持 `CursorSize` 不變，接著呼叫：
-
-```text
-SystemParametersInfoW(0x2029, 0, IntPtr(CursorBaseSize), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
-```
-
-本機 probe 顯示，`0x2029` 搭配把 base size 整數直接放在 `pvParam` 可以即時更新 `CursorBaseSize`。傳入 `UINT` 指標是錯誤形式，會把指標地址寫進 registry。
-
-## Padded Cursor Scheme
-
-app 會先備份目前正在使用的 cursor scheme，然後從每個原始 cursor 檔案讀取最符合所選 glyph size 的 frame。接著把這個圖形放到 144 px 透明畫布左上角，保留原本 hotspot，並把產生的 `.cur` 或 `.ani` 寫到 `generated_cursors/`。預設 glyph size 是 `48` px。
-
-如果某個 cursor role 原本是空值或指向不存在的檔案，才會 fallback 到 `C:\Windows\Cursors` 底下對應的 Windows 預設 cursor。
-如果原本是 `.ani` 動畫 cursor，會重建成 padded `.ani`：保留原本 RIFF 動畫結構、frame rate、frame sequence，只把每個內嵌 cursor frame 轉成 144 px padded 格式。
-
-這些檔案是 runtime output，已刻意加入 `.gitignore`，不會提交到 Git。
+重啟 DWM 需要系統管理員權限，桌面也可能會短暫變黑或刷新，因為 Windows 正在重新啟動 compositor。app 啟動時不會自動重啟 DWM。
 
 ## 已測試結果
 
-- 直接寫入任意 `CursorSize` 和 `CursorBaseSize` registry 組合不會改變 live cursor。
-- `SPI_SETMOUSETRAILS(2)` 會即時生效並產生指標拖尾，但對閃爍沒有明顯幫助。它不是指標大小 8 觸發的同一條渲染路徑。
-- `SystemParametersInfoW(0x2029, 0, IntPtr(baseSize), ...)` 會即時改變 `CursorBaseSize`。
-- 前面的值不是關鍵：`7 / 144` 和 `8 / 144` 都會進入穩定狀態。
-- 後面的值才是關鍵：`CursorBaseSize >= 144` 不會閃爍，低於 `144` 仍會閃爍。
+- DXGI Desktop Duplication 可能出現游標閃爍，但 WGC 正常。
+- 在 26300.8697，本機游標也可能閃爍，但 WGC 擷取仍然正常。
+- 指標大小 1-7 會受影響；指標大小 8 正常。
+- 關鍵 size gate 看起來是 `CursorBaseSize >= 144`，不是 `CursorSize` 本身。
+- 重啟 Desktop Window Manager 會完全清除閃爍狀態，直到下次關機或重新開機。
 
 ## 注意事項
 
-- 這是針對 Windows 游標合成 regression 的實驗性診斷 app。
-- 它不建立 topmost overlay 視窗，因此不應阻止遊戲進入獨佔全螢幕。
+這是針對 Windows compositor regression 的暫時 workaround，不是正式修復。向
+Microsoft 回報時應該加入 DWM restart 這個發現，因為它指向 DWM cursor
+composition state，而不只是 cursor 檔案內容問題。
