@@ -77,18 +77,14 @@ class DwmManager:
 
     def restart(self):
         session_id = self.current_session_id()
-        command = (
-            "Start-Process taskkill "
-            f"-ArgumentList '/f','/fi','imagename eq dwm.exe','/fi','session eq {session_id}' "
-            "-WindowStyle Hidden -Wait"
-        )
+        parameters = f'/f /fi "imagename eq dwm.exe" /fi "session eq {session_id}"'
         result = shell32.ShellExecuteW(
             None,
             "runas",
-            "powershell.exe",
-            f'-NoProfile -ExecutionPolicy Bypass -Command "{command}"',
+            "taskkill.exe",
+            parameters,
             None,
-            0,
+            1,
         )
         if int(result) <= 32:
             if int(result) == 1223:
